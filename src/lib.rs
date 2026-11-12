@@ -7,6 +7,7 @@ pub mod gtt;
 pub mod notify;
 pub mod push;
 pub mod rules;
+pub mod scheduler;
 pub mod stops;
 pub mod time;
 pub mod upstream;
