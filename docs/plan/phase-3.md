@@ -72,6 +72,10 @@ Checked on the Mac in Chrome, where `localhost` allows Web Push (there is no Xco
 | AP | Keeping subscriptions alive | When the Notifiche screen opens with permission granted, the web app **sends its subscription again** (upsert by endpoint); a subscription made with another server key is replaced (decided 2026-11-05, step 4) |
 | AQ | States without a mockup | Notifications blocked, push disabled on the server, browser not supported: **text variants of the approved card**, no new mockup. On an iPhone outside the Home Screen, the mockup's warning, linking to `/info` (decided 2026-11-05, step 4) |
 | AR | Device label | From the `User-Agent` on the server: iPhone, iPad, Android, Mac, Windows, otherwise none. An iPad in desktop mode says "Macintosh" and is labelled Mac (decided 2026-11-05, step 4) |
+| AS | When a new alert is sent | **With the rule's occurrence**, right after its summary, never as soon as it is read: no notification at night, and on paused or holiday days the alert waits for the next occurrence; an alert that ended meanwhile is not sent. Each alert is sent once, keyed by GTT's alert id, stable across reads (decided 2026-11-12, step 5, [plan](steps/phase-3-step-5.md)). Rejected: sending within 5 minutes of reading, at any hour |
+| AT | Alerts already active | **Not sent**: only alerts first seen after the scheduler's first start and after the rule was created. The ids read at the first start are stored as handled. Old alerts stay in the stop's banner (decided 2026-11-12, step 5) |
+| AU | Empty or failed summary | **A short message anyway**: "Nessuna partenza nei prossimi 30 minuti." or, after the grace of decision M, "Riepilogo non disponibile: dati non raggiungibili." (decided 2026-11-12, step 5). Rejected: silence, with the outcome only in the rule's state |
+| AV | Scheduled-only departures in a summary | Marked **`(orario)`**: `15 → Sassi 07:47 (orario) tra 7'` (decided 2026-11-12, step 5) |
 
 ## 3. What we know about the upstream
 
@@ -187,7 +191,7 @@ A recurring rule identifies the run each day from line, stop and scheduled time,
 - A single background task, ticking every 15 seconds.
 - Time comes from the `Clock` trait, so tests use a fake clock (daylight saving, midnight, holidays).
 - On each tick it computes today's occurrences of every active rule in `Europe/Rome`: local times that do not exist (spring forward) move to the next valid minute; ambiguous ones (fall back) use the first occurrence.
-- Each occurrence has a row in `rule_runs` (rule, date, status), so after a restart nothing already sent is sent again.
+- Each occurrence has a row in `rule_runs` (rule, calendar day, status), so after a restart nothing already sent is sent again. The row's date is the calendar day in Europe/Rome (decision AI). Besides `running`, `sent`, `skipped` and `failed`, step 5 added `pending`: the upstream failed and the occurrence is retried at each tick until the grace of decision M ends, then it becomes `failed` (decision AU).
 - Upstream calls go through the departures cache, so a summary and a tracking on the same stop share the same calls.
 
 ### Summary
@@ -289,12 +293,13 @@ CREATE TABLE rules (
   updated_at    TEXT NOT NULL
 );
 
--- Created with the scheduler, step 5 (decision AF).
+-- Created with the scheduler, step 5 (decision AF); migration 0006.
 CREATE TABLE rule_runs (
   rule_id    INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
-  date       TEXT NOT NULL,           -- service date, Europe/Rome
-  status     TEXT NOT NULL,           -- waiting, searching, tracking, done, not_found, cancelled, skipped, failed
-  state      TEXT,                    -- JSON: trip_id, events notified, last expected time
+  date       TEXT NOT NULL,           -- calendar day in Europe/Rome (decision AI), not the service date
+  status     TEXT NOT NULL,           -- no CHECK. Step 5: running, pending, sent, skipped, failed. Step 6 adds: waiting, searching, tracking, done, not_found, cancelled
+  due_at     TEXT NOT NULL,           -- the occurrence's time, UTC
+  state      TEXT,                    -- JSON; NULL for summaries; tracking: trip_id, events notified, last expected time
   updated_at TEXT NOT NULL,
   PRIMARY KEY (rule_id, date)
 );
@@ -308,14 +313,21 @@ CREATE TABLE push_subscriptions (
   created_at TEXT NOT NULL
 );
 
+-- Step 5 (decision AL); migration 0006. The test notification is not recorded.
 CREATE TABLE notifications (
   id       INTEGER PRIMARY KEY,
-  rule_id  INTEGER,                   -- null for system alerts
-  kind     TEXT NOT NULL,             -- summary, reminder, delay, cancelled, not_found, system
+  rule_id  INTEGER REFERENCES rules(id) ON DELETE SET NULL,  -- the log survives a deleted rule
+  kind     TEXT NOT NULL,             -- summary, alert; later reminder, delay, cancelled, not_found, system
+  title    TEXT NOT NULL,
+  body     TEXT NOT NULL,
+  url      TEXT,
   channel  TEXT NOT NULL,             -- "webpush", "log"
-  text     TEXT NOT NULL,
+  sent     INTEGER NOT NULL,          -- the counts of the SendReport
+  removed  INTEGER NOT NULL,
+  failed   INTEGER NOT NULL,
   sent_at  TEXT NOT NULL
 );
+CREATE INDEX notifications_sent_at ON notifications (sent_at);
 
 -- One row per tracked run: shared by every rule (and, later, every user) tracking it.
 CREATE TABLE observed_delays (
@@ -340,10 +352,11 @@ CREATE TABLE gtt_stops (
 -- last check (at) and the number of stops (count).
 ALTER TABLE sync_state ADD COLUMN version TEXT;
 
--- Alerts already notified, so a restart does not notify them again.
+-- Step 5; migration 0006. Alerts already seen and handled, so a restart does not notify them again.
 CREATE TABLE notified_alerts (
-  alert_id    TEXT PRIMARY KEY,
-  notified_at TEXT NOT NULL
+  alert_id      TEXT PRIMARY KEY,
+  first_seen_at TEXT NOT NULL,
+  notified_at   TEXT                  -- NULL: not handled yet; the baseline is stored as handled
 );
 ```
 
@@ -426,7 +439,7 @@ Each step in its own branch with a PR to `main` and its chapter in `docs/develop
 2. **Alerts**: GTFS static download (`stops.txt` → `gtt_stops`), reading, linking, `alerts` in the departures of a stop, `/api/alerts`, banner on the stop page of the web app, the GTT static data row on the info screen. Decisions O and Q changed, AD and AE added on 2026-11-04.
 3. **Rules**: the `rules` table, typed config, CRUD API with pause and resume, holiday calendar, occurrence calculation with fake clock. Decision K changed and AF–AJ added on 2026-11-05.
 4. **Web Push**: VAPID keys, subscriptions, `WebPushNotifier`, `LogNotifier`, push handling in the service worker, the Notifiche tab with "Attiva notifiche" and the test notification. Check: a test notification arrives in Chrome on the Mac. Decisions AK–AR added on 2026-11-05.
-5. **Scheduler and summaries**: tick, the `rule_runs` table (decision AF), summary rules, `/api/rules/{id}/test`, notification of new alerts on the lines of a rule.
+5. **Scheduler and summaries**: tick, the `rule_runs` table (decision AF), summary rules, `/api/rules/{id}/test`, notification of new alerts on the lines of a rule. Plan in [steps/phase-3-step-5.md](steps/phase-3-step-5.md); decisions AS–AV added on 2026-11-12. Done on branch `feat/scheduler`; chapter 18.
 6. **Tracking**: state machine, "Avvisami" on a departure, recurring tracking rules, vehicle positions, the live page.
 7. **Rules in the web app**: list and editor in the Notifiche tab: create, edit, pause, skip today, test, delete.
 8. **Health alerts**: down, recovered, schema changed, sync failed, GTT feeds.
