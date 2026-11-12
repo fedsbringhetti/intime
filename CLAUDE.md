@@ -7,6 +7,8 @@ Personal service for real-time GTT public transport departures in Turin: Rust ba
 - [PLAN.md](PLAN.md): project phases, cross-cutting decisions, workflow.
 - [docs/README.md](docs/README.md): documentation index and layout.
 - [docs/plan/](docs/plan/phase-1.md): detailed plan of each phase.
+- [docs/plan/steps/](docs/plan/steps/README.md): plan and final report of each medium or large item.
+- [docs/backlog.md](docs/backlog.md): work not done yet, with evidence. [docs/adr/](docs/adr/README.md): structural decisions.
 - [docs/architecture.md](docs/architecture.md), [docs/user/](docs/user/api.md), [docs/development/](docs/development/README.md): how it works, how to use it, how it was built.
 
 Decisions already made are recorded in these files: follow them, and when a choice is not covered, ask instead of deciding alone.
@@ -14,52 +16,49 @@ Decisions already made are recorded in these files: follow them, and when a choi
 ## Language
 
 - Everything in the repository is in English: file and directory names, document contents, code, identifiers, comments, branch names, commit messages, PR titles and descriptions, release notes.
-- Conversation with the user is in Italian.
+- Conversation with the user is in Italian, in short messages.
 
 ## How we work
 
-- Plan first, then build. Do not write code, project skeletons or configuration files for a phase until the user explicitly says to start.
-- Involve the user step by step: before a multi-step process (development step, release, deployment, git or GitHub operations) outline the steps, explain what each one does as it runs, and stop for their OK before changing the repository or anything outside it. They want to understand how things work, not only get them done. Group confirmations to keep turns few (see Token economy).
-- Each phase has a detailed plan in `docs/plan/phase-N.md`, written and approved before the phase starts. If the plan changes during development, update the file.
-- Every development step adds a chapter in `docs/development/` (`NN-short-name.md`, template in its README) in the same PR as the code: goal, decisions, files, how the code works with short excerpts, tests, how to check it, pitfalls. Changes visible to users also update `docs/user/`; design changes update `docs/architecture.md`. Use the `docs-sync` skill (`.claude/skills/docs-sync/`) for this: a hook blocks commits and PRs whose code changes have no documentation update.
+Applies to every piece of work: a backlog item, a development step, a fix.
 
-## Multi-agent workflow
+### Before touching anything
 
-Capable models decide, efficient models build. Size every request first and use the lightest workflow that fits:
+- Read the existing code and docs. Measure what is taken as true (run it, grep it) instead of trusting descriptions: plans and issues age.
+- Size each item, not the whole PR. **Small** (behavior already clear, few files): done directly by the session. **Medium or large** (several modules, shared contracts, concurrency, persistence, security): three phases, plan → implementation → review.
+- For a medium or large item the plan goes in the repository before any code: `docs/plan/steps/<name>.md` (e.g. `phase-3-step-5.md`), at most about 150 lines: verified facts with the file where each was found, decisions and why, pitfalls, done criteria. Questions that cannot be decided alone go to the user all at once, with concrete examples.
+- Each phase still has its plan in `docs/plan/phase-N.md`, approved before the phase starts and updated when it changes; no code for a phase until the user says to start. New screens are mocked up on the design canvas and approved before any UI code.
 
-| Request | Workflow |
-|---------|----------|
-| Simple (small fix, one edit, docs) | done directly by the session, no planning phase, no subagents |
-| Medium (one bounded change) | analyzed and done by the session, or by one Sonnet subagent for a well-bounded part |
-| Complex (a development step) | plan (Opus, high) → Sonnet implements and tests → Opus reviews |
-| Architectural or high risk | deeper plan (Opus, high) → delegated implementation → independent Opus review |
+### During
 
-1. **Plan** (the session, Opus at high effort). Read the plan of the phase, the docs and the code involved; then write the plan the user approves under "How we work": goals and requirements, files to change and create, contracts and interfaces between parts, dependencies between tasks, acceptance criteria, tests, constraints, risks. Split it into tasks that can run independently. Nothing is delegated before the plan is approved.
-2. **Implement and test** (Agent tool, `model: "sonnet"`, `effort: "medium"`). One subagent per task, with a short but complete brief: its part of the plan, the files it owns, the contracts it must respect, the tests to write and the checks to run. Subagents explore only what their task needs, follow the existing conventions, write or update tests, change nothing outside their task, never commit, push or touch git, and report any gap or contradiction in the plan instead of working around it. Run subagents in parallel only on independent tasks with no file in common; otherwise one after the other.
-3. **Review** (Agent tool, `model: "opus"`, `effort: "medium"`, a fresh agent, not a fork). For development steps, architectural changes and complex features, never after small edits. It receives the approved plan and the diff, not the session's conclusions, and checks requirements, consistency with the architecture, correctness, errors and edge cases, security, tests and regressions. Its report ranks problems by severity with suggested fixes; the session (or a Sonnet subagent) fixes them before the commit table.
+- Implementation agents get an explicit cheap model (`model: "sonnet"`, `effort: "medium"`), otherwise they inherit the session's. One agent per task, briefed with the path of the plan file and its part; in parallel only on tasks with no file in common. Agents never touch git and report gaps or contradictions instead of working around them.
+- **One review**, by a separate agent on Opus (`model: "opus"`, `effort: "medium"`), limited to the diff and the plan; it reports problems and never edits code. A second round only if the first finds a defect that can lose data, crash the process or let through what the change must stop, and only on the fixes. Never a third without asking.
+- A defect this change did not introduce becomes an item in [docs/backlog.md](docs/backlog.md) with its evidence, not a commit, unless the user says otherwise for that defect.
+- No report is proof, neither the implementer's nor the reviewer's: verify independently with build, lint and tests (Commands) and, where it makes sense, with the running app. A new migration is tried on a copy of the data folder (`DATA_DIR`), never on `data/gtt.db`.
 
-The session keeps the conversation with the user, decisions, git and GitHub, the full checks under "Commands" and the commit table. A subagent's report is not proof: check its diff before relying on it. If implementation reveals an architectural problem, stop the subagents and revise the plan with the user.
+### Documentation
 
-### Token economy
+- Docs change with the code, in the same commit: `docs/user/` for visible behavior, `docs/architecture.md` for design, the step's chapter in `docs/development/` (template in its README). Use the `docs-sync` skill (`.claude/skills/docs-sync/`): a hook blocks commits whose code changes have no documentation update.
+- Structural or hard-to-reverse decisions go in an ADR in [docs/adr/](docs/adr/README.md), append-only: a superseded decision gets a new ADR, the old one is never edited. Prefer a test that checks the docs (`check_docs.py`) to a reminder.
+- At the end, append to the item's plan file a report of at most one page: what was built, where the plan was wrong, questions for the next work.
 
-Use as few tokens as possible: the user asked for it. Every turn re-reads the whole conversation, so a long session is the main cost (step 4 of Phase 3: about 6.8M effective tokens, 61% in the session, mostly re-reading).
+### History and publishing
 
-- **One session per phase** of a development step, each started fresh from a handoff file in `.claude/handoff/` (not in git): **plan** (Opus) ends with the approved plan, contracts and commit split in `phase-N-step-M.md`; **build** (subagents, checks, review, fixes) appends what changed and what was verified; **ship** (docs, commits, PR) works from both. A new session reads the handoff file and the files it names, not the old conversation.
-- **Model per phase**, suggested at the start of each session (the user switches it): Opus for plan; Sonnet for ship and for routine build sessions.
-- **Fewer turns**: one approval for plan and commit split; parallel subagents are checked together when all have finished; messages to the user only at decisions and at the end of a phase.
-- **Small reads**: only the sections needed (grep, line ranges), never whole long documents to find one fact; a wide exploration goes to a subagent that returns a summary; no reading back a file just edited or verified.
-- **Short briefs**: subagents get the path of the handoff file and their part, not a copy of it; the docs subagent gets the sections to change and the facts already verified.
+- Creating a branch needs no permission: `feat/...`, `fix/...`, `docs/...` from an up-to-date `main`, one PR per branch, never stacked on another. `main` always works.
+- When the work is ready, propose the commits in a table (type and scope, subject, what it covers) and stop. Commit only after approval. Push only after a separate confirmation: approving one push does not cover the next.
+- The user opens the PRs; when asked, use the repository's PR template if there is one. Group work in PRs by area, so CI does not run for a few lines.
+- Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`, `chore:`, ...), with no attribution trailers (no `Co-Authored-By`). Releases are semantic version tags (`v0.1.0`, `-rcN` for pre-releases), only when asked.
+
+## Token economy
+
+Every token counts: keep messages short. Every turn re-reads the whole conversation, so a long session is the main cost (Phase 3, step 4: about 6.8M effective tokens, 61% in the session, mostly re-reading).
+
+- **One session per phase** of a medium or large item, each started fresh from the item's plan file: the plan session (Opus) ends with the approved plan in `docs/plan/steps/`; the implementation session (Sonnet suggested) works from it and adds what changed and what was verified. A new session reads the plan file and the files it names, not the old conversation.
+- **Model per phase**, suggested at the start of each session; the session's model and effort are the user's choice (model picker in the app, `/model` and `/effort` in the terminal) and are never changed by Claude. Subagents get `model` and `effort` on each Agent call; if a call cannot set them, say so.
+- **Fewer turns**: one approval for the plan; parallel agents are checked together when all have finished; messages to the user only at decisions and at the end of a phase.
+- **Small reads**: only the sections needed (grep, line ranges), never whole long documents to find one fact; a wide exploration goes to an agent that returns a summary; no reading back a file just edited or verified.
 - **Commits**: never move or delete files to get past a hook; fix the hook instead.
-- Also: no Opus at high effort for routine work; no delegation of trivial work; no two agents reading the same files for the same purpose; no analysis repeated once done; never trade correctness, security or tests for tokens.
-
-Models and effort: the session's model and effort are the user's choice (model picker in the app, `/model` and `/effort` in the terminal) and are never changed by Claude; planning at high effort needs the session set that way. Subagents get `model` and `effort` on each Agent call, so no `.claude/agents/` files are needed. If a call cannot set them, say so and do not pretend the step ran on that model.
-
-## Git
-
-- `main` always works. No `dev` branch.
-- Every change in a short-lived branch from `main` (`feat/...`, `fix/...`, `docs/...`), merged back through a PR once CI passes.
-- Releases as semantic version tags (`v0.1.0`, ...); pre-releases with `-rcN`.
-- Commit, push, open PRs and tag only when asked.
+- No Opus at high effort for routine work; no delegation of trivial work; no two agents reading the same files for the same purpose; no analysis repeated once done; never trade correctness, security or tests for tokens.
 
 ## Stack
 
