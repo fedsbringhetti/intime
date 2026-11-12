@@ -77,7 +77,7 @@ Tell the user which documents changed and why, in a short list, and keep the doc
 
 ## Safety nets
 
-- **Hook** (`.claude/settings.json`): before `git commit` and `gh pr create`, `scripts/docs_gate.py` blocks when code changed on the branch but no documentation did, or when `check_docs.py` fails. Its message lists the documents to review. For a change that truly has no documentation impact (a pure refactor, a dependency bump), add `[skip docs]` to the commit message and say why in the report.
+- **Hook** (`.claude/settings.json`): before `git commit` and `gh pr create`, `scripts/docs_gate.py` blocks when code changed on the branch but no documentation did, or when `check_docs.py` fails. It checks the index for a commit (a temporary copy; with `-a`, plus tracked edits) and the committed branch for a PR, never unrelated working-folder edits, so never move docs aside to get past it; if one command stages and commits (`git add ... && git commit`) it checks the working folder. It matches only real commands, not words inside a heredoc or string. Its message lists the documents to review. For a change that truly has no documentation impact (a pure refactor, a dependency bump), add `[skip docs]` to the commit message and say why in the report.
 - **CI** runs `check_docs.py` on every PR, so broken links and stale excerpts also fail there.
 
 All documentation is in English, like everything else in the repository.

@@ -108,7 +108,7 @@ Three pieces work together:
 | Piece | Where | What it does |
 |-------|-------|--------------|
 | **docs-sync skill** | `.claude/skills/docs-sync/SKILL.md` | The procedure Claude follows after a code change: find the affected documents, update the reference docs and the development chapter, verify, report. |
-| **Hook** | `.claude/settings.json` | Before `git commit` and `gh pr create`, blocks when code changed on the branch but no documentation did, or when the docs check fails. Add `[skip docs]` to the commit message for a change with no documentation impact. |
+| **Hook** | `.claude/settings.json` | Before `git commit` and `gh pr create`, blocks when code changed on the branch but no documentation did, or when the docs check fails. It checks what will be committed (a temporary copy of the index; with `-a`, plus tracked edits) or, for a PR, the committed branch, so unrelated edits in the working folder never matter and docs never need moving aside. If the same command stages first (`git add ... && git commit`), it checks the working folder instead. Only real commands are matched, not their words inside a heredoc or a string. Add `[skip docs]` to the commit message for a change with no documentation impact. |
 | **CI check** | `.github/workflows/ci.yml` | Runs the docs check on every PR. |
 
 The skill's scripts can also be run by hand:

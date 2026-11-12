@@ -47,14 +47,23 @@ def git(repo, *args):
     return result.stdout if result.returncode == 0 else ""
 
 
-def changed_files(repo, base):
+def changed_files(repo, base, scope="worktree"):
+    """Files changed since the branch left `base`.
+
+    scope: "branch" = commits only; "index" = commits + staged (what a commit would contain);
+    "tracked" = index + unstaged edits of tracked files (`git commit -a`);
+    "worktree" = everything, untracked files included.
+    """
     merge_base = git(repo, "merge-base", base, "HEAD").strip()
     names = set()
     if merge_base:
         names |= set(git(repo, "diff", "--name-only", merge_base, "HEAD").split())
-    names |= set(git(repo, "diff", "--name-only", "--cached").split())
-    names |= set(git(repo, "diff", "--name-only").split())
-    names |= set(git(repo, "ls-files", "--others", "--exclude-standard").split())
+    if scope != "branch":
+        names |= set(git(repo, "diff", "--name-only", "--cached").split())
+    if scope in ("tracked", "worktree"):
+        names |= set(git(repo, "diff", "--name-only").split())
+    if scope == "worktree":
+        names |= set(git(repo, "ls-files", "--others", "--exclude-standard").split())
     return sorted(names)
 
 
@@ -66,8 +75,10 @@ def chapters(repo):
     return sorted(glob.glob(os.path.join(repo, "docs", "development", "[0-9][0-9]-*.md")))
 
 
-def analyze(repo, base):
-    changed = changed_files(repo, base)
+def analyze(repo, base, scope="worktree", root=None):
+    """`root` is a folder holding the files to read (a snapshot); git always runs in `repo`."""
+    root = root or repo
+    changed = changed_files(repo, base, scope)
     code = [path for path in changed if is_code(path)]
     docs = [path for path in changed if path.startswith("docs/") or path in ("README.md", "CLAUDE.md", "PLAN.md")]
 
@@ -79,14 +90,14 @@ def analyze(repo, base):
                     review.setdefault(target, set()).add(f"{path} ({why})")
 
     mentioned = {}
-    for chapter in chapters(repo):
+    for chapter in chapters(root):
         with open(chapter, encoding="utf-8") as handle:
             text = handle.read()
         hits = [path for path in code if path in text]
         if hits:
-            mentioned[os.path.relpath(chapter, repo)] = hits
+            mentioned[os.path.relpath(chapter, root)] = hits
 
-    existing = [os.path.basename(path) for path in chapters(repo)]
+    existing = [os.path.basename(path) for path in chapters(root)]
     numbers = [int(name[:2]) for name in existing if re.match(r"\d\d-", name)]
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
 
