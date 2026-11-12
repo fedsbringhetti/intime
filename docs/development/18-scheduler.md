@@ -97,6 +97,9 @@ curl -s localhost:8080/api/notifications
 
 Replace `HH:MM` with a time two minutes ahead in Rome: within a minute of it the notification arrives (in the log without a VAPID key, in Chrome with one) and `GET /api/rules/1/runs` shows today as `sent`. Use `SCHEDULER_TICK_SECS=2` to see it sooner.
 
+Checked by hand on 2026-11-12 in Chrome on the Mac: a summary two minutes ahead and `/test` both arrived. They share the tag `rule-<id>`, so the later one replaces the earlier in the notification centre; this is by design.
+
+
 ## Pitfalls
 
 - **Never "today + time"**: DST days are tested because `local_time` does the conversion; the scheduler only compares instants.

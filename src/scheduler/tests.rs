@@ -84,7 +84,7 @@ impl DepartureSource for FakeDepartures {
                     stop: StopRef {
                         id: stop_id.to_owned(),
                         code: "39".to_owned(),
-                        name: "Rebaudengo".to_owned(),
+                        name: "REBAUDENGO FOSSATA".to_owned(),
                     },
                     fetched_at: Utc::now(),
                     departures,
@@ -181,7 +181,7 @@ fn standard_departures() -> Vec<Departure> {
     vec![
         departure(
             "4",
-            "Falchera",
+            "FALCHERA",
             "2026-11-12T06:43:10Z",
             120,
             Source::Otp,
@@ -309,7 +309,7 @@ async fn sends_once_across_ticks_and_restarts() {
 
     let sent = h.notifier.all();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].title, "🚌 Morning — Rebaudengo (39)");
+    assert_eq!(sent[0].title, "🚌 Morning — Rebaudengo Fossata (39)");
     assert_eq!(
         sent[0].body,
         "4 → Falchera 07:43 (+2) tra 3'\n15 → Sassi 07:47 (orario) tra 7'\n9 → Centro 07:50 cancellata"
@@ -759,4 +759,21 @@ async fn many_new_alerts_are_one_notification() {
     assert_eq!(sent.len(), 2);
     assert_eq!(sent[1].title, "🚧 3 nuovi avvisi a 39");
     assert_eq!(sent[1].body.lines().count(), 3);
+}
+
+#[test]
+fn departure_lines_are_title_cased() {
+    let now = utc("2026-11-12T16:20:00Z");
+    let upstream = departure(
+        "52",
+        "VAL SALICE, PIAZZALE ADUA",
+        "2026-11-12T16:22:00Z",
+        0,
+        Source::Otp,
+        false,
+    );
+    assert_eq!(
+        departure_line(&upstream, now),
+        "52 → Val Salice, Piazzale Adua 17:22 tra 2'"
+    );
 }

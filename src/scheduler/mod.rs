@@ -13,6 +13,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::{
     departures::{Departure, DeparturesError, DeparturesService, Fetched, Filter, Source},
+    display_name::display_name,
     gtt::alerts::{Alert, Alerts, AlertsService},
     notify::{BoxFuture, MAX_PAYLOAD_BYTES, Notification, Notifier, NotifyError, SendReport},
     rules::{Rule, RuleConfig, RuleStore, SummaryConfig, schedule::Day, schedule::local_date},
@@ -96,7 +97,7 @@ async fn stop_label(stops: &StopIndex, stop_id: &str, fetched: Option<&Fetched>)
     };
     if let Some(info) = info {
         return StopLabel {
-            name: info.name,
+            name: display_name(&info.name),
             code: info.code,
             lines: info.lines,
         };
@@ -104,7 +105,7 @@ async fn stop_label(stops: &StopIndex, stop_id: &str, fetched: Option<&Fetched>)
     let code = stop_id.split_once(':').map_or(stop_id, |(_, code)| code);
     match fetched {
         Some(fetched) => StopLabel {
-            name: fetched.data.stop.name.clone(),
+            name: display_name(&fetched.data.stop.name),
             code: fetched.data.stop.code.clone(),
             lines: Vec::new(),
         },
@@ -164,7 +165,7 @@ fn departure_line(departure: &Departure, now: DateTime<Utc>) -> String {
     let mut line = departure.line.clone();
     if let Some(headsign) = &departure.headsign {
         line.push_str(" → ");
-        line.push_str(headsign);
+        line.push_str(&display_name(headsign));
     }
     line.push_str(&format!(" {}", departure.expected.format("%H:%M")));
     if departure.canceled {

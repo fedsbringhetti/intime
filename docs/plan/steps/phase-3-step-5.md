@@ -91,6 +91,8 @@ Branch `feat/scheduler`, one PR.
 
 **Backlog added:** global `notified_alerts` (two rules on one stop), baseline needs a non-empty first read, only active alerts recorded, `skipped` blocks a later time the same day, `notified_alerts` never purged.
 
-**Not done:** the by-hand check (a summary rule two minutes ahead and `/test` arriving in Chrome); no test for per-alert marking; decision 10 text above is not updated for the 2×grace rule.
+**By hand (2026-11-12, Chrome on the Mac, data copy):** a summary rule two minutes ahead arrived on time (push logged in `chrome://gcm-internals`); `/test` and `/api/notifications/test` arrived at once; `GET /api/notifications`, `/runs` and `today.run` showed the sends. It found one defect: texts kept the upstream capitals; fixed by porting the web app's `displayName` to the server. One of three automatic sends was accepted by the push service (`sent: 1`) but not seen by the user; it happened before the recording started, so it is not reproducible. `/test` and the scheduled summary share the tag `rule-N`, so the later replaces the earlier (by design).
+
+**Not done:** no test for per-alert marking; decision 10 text above is not updated for the 2×grace rule.
 
 **For the next work (step 6):** tracking reuses `rule_runs.state` and the statuses; the scheduler ignores tracking rules for now.

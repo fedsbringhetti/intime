@@ -302,7 +302,7 @@ curl -s -H "$AUTH" -X POST "$BASE/api/rules/1/test"
 Sends the summary of a summary rule now, whatever its days, pause or `enabled`, and records it in the log; it writes no run, so the real one still goes out. The answer is the one of the notification test plus what was sent:
 
 ```json
-{"channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "title": "🚌 Casa → lavoro — PORTA NUOVA (39)", "body": "9B → Falchera 07:43 (+2) tra 3'"}
+{"channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "title": "🚌 Casa → lavoro — Porta Nuova (39)", "body": "9B → Falchera 07:43 (+2) tra 3'"}
 ```
 
 `422` `not_a_summary` for a tracking rule; `404` `rule_not_found`; `502` or `504` when the departures cannot be read.
@@ -367,7 +367,7 @@ curl -s -H "$AUTH" "$BASE/api/notifications?limit=20"
 The log of what the scheduler and `POST /api/rules/{id}/test` sent, newest first (`limit` from 1 to 200, default 50; `400` otherwise). The test above is not in it. Rows older than 90 days are deleted.
 
 ```json
-{"notifications": [{"id": 7, "rule_id": 1, "rule_name": "Casa → lavoro", "kind": "summary", "title": "🚌 Casa → lavoro — PORTA NUOVA (39)", "body": "9B → Falchera 07:43 (+2) tra 3'", "url": "/fermata/39", "channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "sent_at": "2026-11-05T06:40:02Z"}]}
+{"notifications": [{"id": 7, "rule_id": 1, "rule_name": "Casa → lavoro", "kind": "summary", "title": "🚌 Casa → lavoro — Porta Nuova (39)", "body": "9B → Falchera 07:43 (+2) tra 3'", "url": "/fermata/39", "channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "sent_at": "2026-11-05T06:40:02Z"}]}
 ```
 
 `kind` is `summary` (also the "Riepilogo non disponibile" notice) or `alert` (a new GTT alert at the rule's stop). `rule_name` is `null` when the rule was deleted.

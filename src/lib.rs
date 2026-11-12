@@ -2,6 +2,7 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod departures;
+pub mod display_name;
 pub mod favorites;
 pub mod gtt;
 pub mod notify;
