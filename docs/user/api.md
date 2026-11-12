@@ -202,7 +202,7 @@ Every favorite, in order, with its next departures: what the web app's home scre
 
 ## Rules
 
-Rules send notifications on their own: a **summary** of the next departures at a fixed time, or the tracking of one **run** every matching day ([plan](../plan/phase-3.md#5-rule-model)). They are stored and their calendar is computed from Phase 3, step 3; sending them comes with the scheduler (step 5) and tracking (step 6).
+Rules send notifications on their own: a **summary** of the next departures at a fixed time, or the tracking of one **run** every matching day ([plan](../plan/phase-3.md#5-rule-model)). Summaries are sent by the scheduler (Phase 3, step 5, see [architecture](../architecture.md#scheduler)); tracking comes with step 6, and until then a tracking rule is stored and has its calendar but sends nothing.
 
 ```bash
 curl -s -H "$AUTH" -H "Content-Type: application/json" -X POST "$BASE/api/rules" -d '{"name": "Casa → lavoro", "kind": "summary", "stop": "39", "days": ["mon", "tue", "wed", "thu", "fri"], "config": {"time": "07:40", "lines": ["9B", "67"]}}'
@@ -250,13 +250,14 @@ Missing numbers get their defaults, which are stored in the rule: a later change
   "config": {"time": "07:40", "lines": ["9B", "67"], "window_minutes": 30, "max_departures": 6},
   "created_at": "2026-11-05T06:00:00Z", "updated_at": "2026-11-05T06:00:00Z",
   "stop": {"id": "gtt:39", "code": "39", "name": "PORTA NUOVA"}, "missing": false,
-  "today": {"status": "due", "at": "2026-11-05T07:40:00+01:00"},
+  "today": {"status": "due", "at": "2026-11-05T07:40:00+01:00", "run": {"status": "sent", "updated_at": "2026-11-05T06:40:02Z"}},
   "next": "2026-11-05T07:40:00+01:00"
 }
 ```
 
 - `stop` is abridged here; `missing` is true when a sync removed the stop, as for favorites. `date` is set only for a run tracked on the fly (step 6), which this endpoint does not create.
 - `today` says what the rule does today in Europe/Rome, by `status`: `due` (at `at`, even when that time has passed), `not_scheduled` (not one of its days), `holiday` (with the `holiday` name in Italian), `paused` (with `until`), `disabled`.
+- `today.run` is how today's occurrence went, `null` while there is no run yet: `status` is `running` (being sent), `pending` (the upstream failed, retried until the grace ends), `sent`, `skipped` (found too late, or the rule was created or moved to a time already past) or `failed`.
 - `next` is the next occurrence from now, `null` when the rule is off. Times that do not exist when daylight saving starts move to the next valid minute (02:30 → 03:00); times that happen twice when it ends are the first one.
 - The days are calendar days in Rome: a rule on `sat` at `00:30` runs in the night between Friday and Saturday.
 
@@ -292,11 +293,29 @@ Turns the rule on and ends its pause.
 curl -s -H "$AUTH" -X DELETE "$BASE/api/rules/1"
 ```
 
-Deletes it (204).
+Deletes it (204). Its log of notifications is kept, without the link to the rule.
+
+```bash
+curl -s -H "$AUTH" -X POST "$BASE/api/rules/1/test"
+```
+
+Sends the summary of a summary rule now, whatever its days, pause or `enabled`, and records it in the log; it writes no run, so the real one still goes out. The answer is the one of the notification test plus what was sent:
+
+```json
+{"channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "title": "🚌 Casa → lavoro — PORTA NUOVA (39)", "body": "9B → Falchera 07:43 (+2) tra 3'"}
+```
+
+`422` `not_a_summary` for a tracking rule; `404` `rule_not_found`; `502` or `504` when the departures cannot be read.
+
+```bash
+curl -s -H "$AUTH" "$BASE/api/rules/1/runs"
+```
+
+`{"runs": [...]}`: the last 30 runs of the rule, newest day first, each `{"rule_id", "date", "status", "due_at", "state", "updated_at"}` (`date` is the calendar day in Rome, `state` is `null` for summaries). `404` for an unknown rule.
 
 ## Push notifications
 
-Web Push delivers notifications to the phone through the browser's push service, even when InTime is closed ([plan](../plan/phase-3.md#7-notifications-web-push)). Step 4 of Phase 3 adds the subscription and a test; rules and trackings that send come with the scheduler (step 5). It needs `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` ([configuration.md](configuration.md#web-push-keys)); without them the four endpoints below still exist, but the first two answer `503` with `push_disabled` and the test only writes to the log.
+Web Push delivers notifications to the phone through the browser's push service, even when InTime is closed ([plan](../plan/phase-3.md#7-notifications-web-push)). Step 4 of Phase 3 adds the subscription and a test; summaries that send come with the scheduler (step 5), trackings with step 6. It needs `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` ([configuration.md](configuration.md#web-push-keys)); without them the four endpoints below still exist, but the first two answer `503` with `push_disabled` and the test only writes to the log.
 
 The web app does all this from the Notifiche screen: it reads the key, asks the browser for permission and subscribes. The calls are shown for completeness; a subscription needs a real browser's keys, so only the key and the test can be tried with `curl`.
 
@@ -340,6 +359,18 @@ Sends "🔔 Notifica di prova" to every subscribed device (no body needed):
 - `channel` is `webpush`, or `log` when the server has no VAPID key: the notification is then only written to the log and `sent` is 1.
 - `sent`: devices the push service accepted. `removed`: subscriptions deleted because the push service said they no longer exist (404 or 410). `failed`: devices that could not be reached (the push service refused or did not answer); their subscriptions are kept.
 - The response is 200 even when `sent` is 0: look at the counts.
+
+```bash
+curl -s -H "$AUTH" "$BASE/api/notifications?limit=20"
+```
+
+The log of what the scheduler and `POST /api/rules/{id}/test` sent, newest first (`limit` from 1 to 200, default 50; `400` otherwise). The test above is not in it. Rows older than 90 days are deleted.
+
+```json
+{"notifications": [{"id": 7, "rule_id": 1, "rule_name": "Casa → lavoro", "kind": "summary", "title": "🚌 Casa → lavoro — PORTA NUOVA (39)", "body": "9B → Falchera 07:43 (+2) tra 3'", "url": "/fermata/39", "channel": "webpush", "sent": 1, "removed": 0, "failed": 0, "sent_at": "2026-11-05T06:40:02Z"}]}
+```
+
+`kind` is `summary` (also the "Riepilogo non disponibile" notice) or `alert` (a new GTT alert at the rule's stop). `rule_name` is `null` when the rule was deleted.
 
 ## Status and health
 
@@ -388,6 +419,7 @@ Always `{"error": {"code": "...", "message": "..."}}`:
 | 400 | `invalid_request` | bad parameter or body (the message says which) |
 | 401 | `unauthorized` | token missing or wrong |
 | 404 | `stop_not_found`, `favorite_not_found`, `rule_not_found` | unknown stop, favorite or rule |
+| 422 | `not_a_summary` | `POST /api/rules/{id}/test` on a tracking rule |
 | 500 | `internal_error` | database problem (details in the logs) |
 | 502 | `upstream_error` | upstream error and no recent data to fall back on |
 | 503 | `index_not_ready` | stop index not downloaded yet |

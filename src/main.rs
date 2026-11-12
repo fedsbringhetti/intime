@@ -19,6 +19,7 @@ use intime::{
     notify::{Notifier, log::LogNotifier, vapid::VapidKey, webpush::WebPushNotifier},
     push::{EndpointPolicy, SubscriptionStore},
     rules::RuleStore,
+    scheduler::{self, Scheduler, store::SchedulerStore},
     stops::{StopIndex, sync},
     time::{Clock, SystemClock},
     upstream::UpstreamClient,
@@ -178,16 +179,32 @@ async fn serve(config: Config) -> ExitCode {
         tracing::warn!("web app not built: run `npm run build` in web/ (the API works anyway)");
     }
     let upstream_health = upstream.health();
+    let departures = Arc::new(DeparturesService::new(
+        upstream,
+        gtt.clone(),
+        config.departures_cache_ttl,
+        clock.clone(),
+    ));
+    let scheduler_store = SchedulerStore::new(pool.clone());
+    let scheduler = Arc::new(Scheduler::new(
+        rules.clone(),
+        scheduler_store.clone(),
+        departures.clone(),
+        alerts
+            .clone()
+            .map(|alerts| alerts as Arc<dyn scheduler::AlertSource>),
+        stops.clone(),
+        notifier.clone(),
+        config.missed_run_grace,
+    ));
+    scheduler::spawn(scheduler, clock.clone(), config.scheduler_tick);
+
     let state = AppState {
-        departures: Arc::new(DeparturesService::new(
-            upstream,
-            gtt.clone(),
-            config.departures_cache_ttl,
-            clock.clone(),
-        )),
+        departures,
         stops,
         favorites,
         rules,
+        scheduler: scheduler_store,
         subscriptions,
         notifier,
         vapid_public_key,

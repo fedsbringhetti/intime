@@ -10,7 +10,8 @@ use serde_json::json;
 
 use crate::{
     departures::DeparturesError, favorites::FavoritesError, notify::NotifyError, push::PushError,
-    rules::RulesError, stops::IndexError, upstream::UpstreamError,
+    rules::RulesError, scheduler::store::SchedulerStoreError, stops::IndexError,
+    upstream::UpstreamError,
 };
 
 /// Errors returned to API clients as `{"error": {"code": ..., "message": ...}}`.
@@ -22,6 +23,8 @@ pub enum ApiError {
     StopNotFound(String),
     FavoriteNotFound(i64),
     RuleNotFound(i64),
+    /// The action exists only for summary rules.
+    NotSummary(i64),
     UpstreamTimeout,
     Upstream(String),
     /// The stop index has not been synced yet.
@@ -62,6 +65,11 @@ impl ApiError {
                 StatusCode::NOT_FOUND,
                 "rule_not_found",
                 format!("Rule {id} not found"),
+            ),
+            Self::NotSummary(id) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "not_a_summary",
+                format!("Rule {id} is not a summary rule"),
             ),
             Self::UpstreamTimeout => (
                 StatusCode::GATEWAY_TIMEOUT,
@@ -156,6 +164,13 @@ impl From<NotifyError> for ApiError {
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
         tracing::error!("database: {err}");
+        Self::Internal
+    }
+}
+
+impl From<SchedulerStoreError> for ApiError {
+    fn from(err: SchedulerStoreError) -> Self {
+        tracing::error!("scheduler: {err}");
         Self::Internal
     }
 }
