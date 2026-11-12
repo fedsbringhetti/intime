@@ -12,6 +12,7 @@ use crate::{
     notify::Notifier,
     push::{EndpointPolicy, SubscriptionStore},
     rules::RuleStore,
+    scheduler::store::SchedulerStore,
     stops::{Feeds, StopIndex},
     time::Clock,
     upstream::health::UpstreamHealth,
@@ -35,6 +36,8 @@ pub struct AppState {
     pub stops: StopIndex,
     pub favorites: FavoriteStore,
     pub rules: RuleStore,
+    /// Runs of the rules and the log of notifications.
+    pub scheduler: SchedulerStore,
     pub subscriptions: SubscriptionStore,
     /// Delivers notifications: Web Push, or the log without VAPID keys.
     pub notifier: Arc<dyn Notifier>,
@@ -81,11 +84,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/rules/{id}/pause", post(rules::pause))
         .route("/api/rules/{id}/resume", post(rules::resume))
+        .route("/api/rules/{id}/test", post(rules::test))
+        .route("/api/rules/{id}/runs", get(rules::runs))
         .route("/api/push/key", get(push::public_key))
         .route(
             "/api/push/subscriptions",
             post(push::subscribe).delete(push::unsubscribe),
         )
+        .route("/api/notifications", get(notifications::list))
         .route("/api/notifications/test", post(notifications::test));
     if let Some(token) = state.api_token.clone() {
         api = api.route_layer(middleware::from_fn_with_state(token, auth::require_token));

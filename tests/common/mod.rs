@@ -19,6 +19,7 @@ use intime::{
     notify::{Notifier, log::LogNotifier, vapid::VapidKey, webpush::WebPushNotifier},
     push::{EndpointPolicy, SubscriptionStore},
     rules::RuleStore,
+    scheduler::store::SchedulerStore,
     stops::{Feeds, StopIndex, sync::sync_once},
     time::{Clock, FixedClock},
     upstream::UpstreamClient,
@@ -43,6 +44,7 @@ pub struct TestApp {
     /// Set when `Options::gtt_url` and `Options::gtt_gtfs_url` are.
     pub gtt_static: Option<GttStatic>,
     pub subscriptions: SubscriptionStore,
+    pub scheduler: SchedulerStore,
     /// Set when `Options::vapid_key` is.
     pub vapid_public_key: Option<String>,
 }
@@ -129,6 +131,7 @@ pub async fn test_app_with(
         None => Arc::new(LogNotifier),
     };
     let vapid_public_key = options.vapid_key.as_ref().map(VapidKey::public_key_base64);
+    let scheduler = SchedulerStore::new(pool.clone());
     let router = api::router(AppState {
         departures: Arc::new(DeparturesService::new(
             upstream.clone(),
@@ -138,7 +141,8 @@ pub async fn test_app_with(
         )),
         stops: stops.clone(),
         favorites: FavoriteStore::new(pool.clone()),
-        rules: RuleStore::new(pool),
+        rules: RuleStore::new(pool.clone()),
+        scheduler: scheduler.clone(),
         subscriptions: subscriptions.clone(),
         notifier,
         vapid_public_key: vapid_public_key.as_deref().map(Arc::from),
@@ -161,6 +165,7 @@ pub async fn test_app_with(
         alerts,
         gtt_static,
         subscriptions,
+        scheduler,
         vapid_public_key,
     }
 }

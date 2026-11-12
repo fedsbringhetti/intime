@@ -14,6 +14,8 @@ const DEFAULT_FEEDS: &str = "gtt";
 const DEFAULT_GTT_REALTIME_URL: &str = "https://percorsieorari.gtt.to.it/das_gtfsrt/";
 const DEFAULT_GTT_TRIP_UPDATES_CACHE_SECS: &str = "20";
 const DEFAULT_GTT_ALERTS_POLL_SECS: &str = "300";
+const DEFAULT_SCHEDULER_TICK_SECS: &str = "15";
+const DEFAULT_MISSED_RUN_GRACE_MINUTES: &str = "5";
 const DEFAULT_GTT_GTFS_URL: &str = "https://www.gtt.to.it/open_data/gtt_gtfs.zip";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,10 @@ pub struct Config {
     pub gtt_trip_updates_cache_ttl: Duration,
     /// How often GTT's alerts are read (when `gtt_realtime_url` is set).
     pub gtt_alerts_poll: Duration,
+    /// How often the scheduler looks for rules that are due.
+    pub scheduler_tick: Duration,
+    /// A summary found due this late or less is still sent; later it is skipped.
+    pub missed_run_grace: Duration,
     /// GTT's GTFS static archive, for its `stops.txt`. `None` disables it: alerts are then
     /// linked by line only.
     pub gtt_gtfs_url: Option<reqwest::Url>,
@@ -115,6 +121,20 @@ impl Config {
                     Err(err) => Err(err.to_string()),
                 },
             )?),
+            scheduler_tick: Duration::from_secs(parse_with(
+                &lookup,
+                "SCHEDULER_TICK_SECS",
+                DEFAULT_SCHEDULER_TICK_SECS,
+                at_least_one,
+            )?),
+            missed_run_grace: Duration::from_secs(
+                60 * parse_with(
+                    &lookup,
+                    "MISSED_RUN_GRACE_MINUTES",
+                    DEFAULT_MISSED_RUN_GRACE_MINUTES,
+                    at_least_one,
+                )?,
+            ),
             gtt_gtfs_url: parse_with(
                 &lookup,
                 "GTT_GTFS_URL",
@@ -179,6 +199,14 @@ where
     parse_with(lookup, var, default, |value| {
         value.parse().map_err(|err: T::Err| err.to_string())
     })
+}
+
+fn at_least_one(value: &str) -> Result<u64, String> {
+    match value.parse::<u64>() {
+        Ok(0) => Err("must be at least 1".to_owned()),
+        Ok(number) => Ok(number),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 fn parse_with<T>(
@@ -294,6 +322,26 @@ mod tests {
                     ..
                 }
             ));
+        }
+    }
+
+    #[test]
+    fn reads_scheduler_settings() {
+        let config = config_from(&[]).unwrap();
+        assert_eq!(config.scheduler_tick, Duration::from_secs(15));
+        assert_eq!(config.missed_run_grace, Duration::from_secs(300));
+        let config = config_from(&[
+            ("SCHEDULER_TICK_SECS", "5"),
+            ("MISSED_RUN_GRACE_MINUTES", "10"),
+        ])
+        .unwrap();
+        assert_eq!(config.scheduler_tick, Duration::from_secs(5));
+        assert_eq!(config.missed_run_grace, Duration::from_secs(600));
+        for var in ["SCHEDULER_TICK_SECS", "MISSED_RUN_GRACE_MINUTES"] {
+            for value in ["0", "five"] {
+                let err = config_from(&[(var, value)]).unwrap_err();
+                assert!(matches!(err, ConfigError::Invalid { var: v, .. } if v == var));
+            }
         }
     }
 
