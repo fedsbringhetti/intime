@@ -1,6 +1,6 @@
 # 4. Favorites
 
-> Phase 1, step 4 · PR [#6](https://github.com/fedsbringhetti/gtt-personal-api/pull/6)
+> Phase 1, step 4 · PR [#6](https://github.com/fedsbringhetti/intime/pull/6)
 
 ## Goal
 

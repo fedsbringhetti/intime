@@ -4,7 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-image="federicosbringhetti/gtt-personal-api"
+image="federicosbringhetti/intime"
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
 
 output="--load"

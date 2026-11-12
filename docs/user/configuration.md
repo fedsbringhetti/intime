@@ -18,7 +18,7 @@ Environment variables, all optional. In Docker they go in `.env` (see `.env.exam
 | `GTT_GTFS_URL` | `https://www.gtt.to.it/open_data/gtt_gtfs.zip` | GTT's static data, for its `stops.txt`: checked every night 10 minutes after `STOPS_SYNC_TIME`, downloaded only when it changed. Empty disables it: alerts are then linked to stops by their lines only |
 | `VAPID_PRIVATE_KEY` | unset | the server's Web Push key (see below); unset or empty disables Web Push: notifications are only written to the log |
 | `VAPID_SUBJECT` | unset | contact of the Web Push identity, `mailto:you@example.com` or an `https:` URL; required when `VAPID_PRIVATE_KEY` is set, ignored otherwise |
-| `RUST_LOG` | `info` | log level, e.g. `debug` or `info,gtt_personal_api::upstream=debug` |
+| `RUST_LOG` | `info` | log level, e.g. `debug` or `info,intime::upstream=debug` |
 
 ### Web Push keys
 
@@ -31,7 +31,7 @@ cargo run -- vapid-keys
 or, with the Docker image (the entry point is the binary, and the command needs no other configuration):
 
 ```bash
-docker run --rm federicosbringhetti/gtt-personal-api vapid-keys
+docker run --rm federicosbringhetti/intime vapid-keys
 ```
 
 It prints `VAPID_PRIVATE_KEY=...` (to paste into `.env`) and, as comments, the public key and a reminder to set `VAPID_SUBJECT`. Only the private key is configured: the service derives the public one and gives it to the browsers.

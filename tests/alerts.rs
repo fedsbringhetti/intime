@@ -9,7 +9,7 @@ use std::{
 
 use axum::http::StatusCode;
 use common::{Options, TestApp, at, fixture, get};
-use gtt_personal_api::stops::sync::sync_once;
+use intime::stops::sync::sync_once;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_string_contains, method, path},

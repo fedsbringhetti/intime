@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use gtt_personal_api::{
+use intime::{
     api::{self, AppState},
     config::Config,
     db,
@@ -53,7 +53,7 @@ async fn main() -> ExitCode {
         [] => serve(config).await,
         ["healthcheck"] => healthcheck(config.bind_addr).await,
         _ => {
-            eprintln!("usage: gtt-personal-api [healthcheck | vapid-keys]");
+            eprintln!("usage: intime [healthcheck | vapid-keys]");
             ExitCode::from(2)
         }
     }

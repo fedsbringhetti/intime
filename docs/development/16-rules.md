@@ -1,6 +1,6 @@
 # 16. Rules
 
-> Phase 3, step 3 · PR [#23](https://github.com/fedsbringhetti/gtt-personal-api/pull/23)
+> Phase 3, step 3 · PR [#23](https://github.com/fedsbringhetti/intime/pull/23)
 
 ## Goal
 

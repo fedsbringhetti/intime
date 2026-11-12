@@ -1,6 +1,6 @@
 ---
 name: docs-sync
-description: Keep gtt-personal-api's documentation in sync with the code. Use whenever code changes in src/, migrations/, tests/, web/, Dockerfile, docker-compose.yml, .env.example, scripts/ or CI — after implementing a feature or fix, when finishing a development step, before committing or opening a PR, and whenever the docs gate hook blocks a commit. Also use when the user asks to check, update, review or fix the docs, even if they do not say "docs" (e.g. "is everything documented?", "update the guide").
+description: Keep intime's documentation in sync with the code. Use whenever code changes in src/, migrations/, tests/, web/, Dockerfile, docker-compose.yml, .env.example, scripts/ or CI — after implementing a feature or fix, when finishing a development step, before committing or opening a PR, and whenever the docs gate hook blocks a commit. Also use when the user asks to check, update, review or fix the docs, even if they do not say "docs" (e.g. "is everything documented?", "update the guide").
 ---
 
 # Docs sync

@@ -8,23 +8,23 @@ Read the chapters in order the first time: each builds on the previous ones. Cod
 
 | # | Chapter | Phase | PR |
 |---|---------|-------|----|
-| 1 | [Project skeleton](01-skeleton.md): crate, configuration, logging, `/health`, CI | 1 | [#3](https://github.com/fedsbringhetti/gtt-personal-api/pull/3) |
-| 2 | [Departures](02-departures.md): upstream client, times, cache, first real endpoint | 1 | [#4](https://github.com/fedsbringhetti/gtt-personal-api/pull/4) |
-| 3 | [Stop index](03-stop-index.md): SQLite, nightly sync, name normalization, search, nearby | 1 | [#5](https://github.com/fedsbringhetti/gtt-personal-api/pull/5) |
-| 4 | [Favorites](04-favorites.md): ordered favorites, JSON bodies, partial updates | 1 | [#6](https://github.com/fedsbringhetti/gtt-personal-api/pull/6) |
-| 5 | [Robustness](05-robustness.md): retry, stale data, status, optional token | 1 | [#7](https://github.com/fedsbringhetti/gtt-personal-api/pull/7) |
-| 6 | [Docker](06-docker.md): image, health check, compose, deployment files | 1 | [#8](https://github.com/fedsbringhetti/gtt-personal-api/pull/8) |
-| 7 | [Web app skeleton](07-web-skeleton.md): Svelte + Vite project, embedding in the binary, Node stage, frontend CI | 2 | [#11](https://github.com/fedsbringhetti/gtt-personal-api/pull/11) |
-| 8 | [Design base](08-design-base.md): tokens, light and dark, router, bottom bar, badges, departure rows, loaders | 2 | [#13](https://github.com/fedsbringhetti/gtt-personal-api/pull/13) |
-| 9 | [Search and stop](09-search-and-stop.md): API client, names as titles, search while typing, live departures, line filters, error states | 2 | [#14](https://github.com/fedsbringhetti/gtt-personal-api/pull/14) |
-| 10 | [Home and favorites](10-home-and-favorites.md): favorites with departures in one call, Home cards, the star, managing favorites | 2 | [#15](https://github.com/fedsbringhetti/gtt-personal-api/pull/15) |
-| 11 | [Near me](11-near-me.md): the phone's position, nearby stops, a wider radius, denied permission | 2 | [#16](https://github.com/fedsbringhetti/gtt-personal-api/pull/16) |
-| 12 | [Installable and offline](12-pwa-offline.md): InTime's icon and manifest, service worker, last data offline, new version prompt | 2 | [#17](https://github.com/fedsbringhetti/gtt-personal-api/pull/17) |
-| 13 | [Info screen](13-info-screen.md): version, real-time health, stop list, installing InTime | 2 | [#18](https://github.com/fedsbringhetti/gtt-personal-api/pull/18) |
-| 14 | [GTT predictions](14-gtt-predictions.md): GTFS Realtime without `protoc`, trip updates, merge rules, `source`, comparison with OpenTripPlanner, GTT rows on the info screen | 3 | [#21](https://github.com/fedsbringhetti/gtt-personal-api/pull/21) |
-| 15 | [GTT alerts](15-gtt-alerts.md): GTT's static data with conditional requests, alerts linked by stop or by line, `/api/alerts`, the alerts banner, the static data row on the info screen | 3 | [#22](https://github.com/fedsbringhetti/gtt-personal-api/pull/22) |
-| 16 | [Rules](16-rules.md): summaries and trackings with typed config, holidays and Easter, occurrences across daylight saving and midnight, CRUD API with pause and resume | 3 | [#23](https://github.com/fedsbringhetti/gtt-personal-api/pull/23) |
-| 17 | [Web Push](17-web-push.md): VAPID keys, encrypted and signed pushes, subscriptions, the `Notifier` interface, the Notifiche screen, the service worker's `push` and `notificationclick` | 3 | [#24](https://github.com/fedsbringhetti/gtt-personal-api/pull/24) |
+| 1 | [Project skeleton](01-skeleton.md): crate, configuration, logging, `/health`, CI | 1 | [#3](https://github.com/fedsbringhetti/intime/pull/3) |
+| 2 | [Departures](02-departures.md): upstream client, times, cache, first real endpoint | 1 | [#4](https://github.com/fedsbringhetti/intime/pull/4) |
+| 3 | [Stop index](03-stop-index.md): SQLite, nightly sync, name normalization, search, nearby | 1 | [#5](https://github.com/fedsbringhetti/intime/pull/5) |
+| 4 | [Favorites](04-favorites.md): ordered favorites, JSON bodies, partial updates | 1 | [#6](https://github.com/fedsbringhetti/intime/pull/6) |
+| 5 | [Robustness](05-robustness.md): retry, stale data, status, optional token | 1 | [#7](https://github.com/fedsbringhetti/intime/pull/7) |
+| 6 | [Docker](06-docker.md): image, health check, compose, deployment files | 1 | [#8](https://github.com/fedsbringhetti/intime/pull/8) |
+| 7 | [Web app skeleton](07-web-skeleton.md): Svelte + Vite project, embedding in the binary, Node stage, frontend CI | 2 | [#11](https://github.com/fedsbringhetti/intime/pull/11) |
+| 8 | [Design base](08-design-base.md): tokens, light and dark, router, bottom bar, badges, departure rows, loaders | 2 | [#13](https://github.com/fedsbringhetti/intime/pull/13) |
+| 9 | [Search and stop](09-search-and-stop.md): API client, names as titles, search while typing, live departures, line filters, error states | 2 | [#14](https://github.com/fedsbringhetti/intime/pull/14) |
+| 10 | [Home and favorites](10-home-and-favorites.md): favorites with departures in one call, Home cards, the star, managing favorites | 2 | [#15](https://github.com/fedsbringhetti/intime/pull/15) |
+| 11 | [Near me](11-near-me.md): the phone's position, nearby stops, a wider radius, denied permission | 2 | [#16](https://github.com/fedsbringhetti/intime/pull/16) |
+| 12 | [Installable and offline](12-pwa-offline.md): InTime's icon and manifest, service worker, last data offline, new version prompt | 2 | [#17](https://github.com/fedsbringhetti/intime/pull/17) |
+| 13 | [Info screen](13-info-screen.md): version, real-time health, stop list, installing InTime | 2 | [#18](https://github.com/fedsbringhetti/intime/pull/18) |
+| 14 | [GTT predictions](14-gtt-predictions.md): GTFS Realtime without `protoc`, trip updates, merge rules, `source`, comparison with OpenTripPlanner, GTT rows on the info screen | 3 | [#21](https://github.com/fedsbringhetti/intime/pull/21) |
+| 15 | [GTT alerts](15-gtt-alerts.md): GTT's static data with conditional requests, alerts linked by stop or by line, `/api/alerts`, the alerts banner, the static data row on the info screen | 3 | [#22](https://github.com/fedsbringhetti/intime/pull/22) |
+| 16 | [Rules](16-rules.md): summaries and trackings with typed config, holidays and Easter, occurrences across daylight saving and midnight, CRUD API with pause and resume | 3 | [#23](https://github.com/fedsbringhetti/intime/pull/23) |
+| 17 | [Web Push](17-web-push.md): VAPID keys, encrypted and signed pushes, subscriptions, the `Notifier` interface, the Notifiche screen, the service worker's `push` and `notificationclick` | 3 | [#24](https://github.com/fedsbringhetti/intime/pull/24) |
 
 The planning that came before the code is in [../plan/](../plan/phase-1.md); the overall picture is in [../architecture.md](../architecture.md).
 

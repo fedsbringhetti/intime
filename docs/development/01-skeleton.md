@@ -1,6 +1,6 @@
 # 1. Project skeleton
 
-> Phase 1, step 1 · PR [#3](https://github.com/fedsbringhetti/gtt-personal-api/pull/3)
+> Phase 1, step 1 · PR [#3](https://github.com/fedsbringhetti/intime/pull/3)
 
 ## Goal
 

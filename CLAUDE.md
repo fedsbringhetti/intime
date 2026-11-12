@@ -65,7 +65,7 @@ Models and effort: the session's model and effort are the user's choice (model p
 
 - Rust: `axum`, `tokio`, `reqwest` (rustls), `sqlx` + SQLite (FTS5), `serde`, `chrono` + `chrono-tz`, `moka`, `tracing`, `thiserror`, `rust-embed`, `prost` (GTFS Realtime).
 - Web app in `web/`: Svelte 5 (plain, no SvelteKit), Vite, TypeScript, Vitest; Node 24 LTS (`web/.nvmrc`). Embedded in the binary from `web/dist/`.
-- Multi-stage Docker for `linux/arm64`; public images on Docker Hub as `federicosbringhetti/gtt-personal-api`.
+- Multi-stage Docker for `linux/arm64`; public images on Docker Hub as `federicosbringhetti/intime`.
 - Deployment follows the home server conventions in [docs/user/deploy.md](docs/user/deploy.md): host port 8100, bind mount `./data`, secrets only in `.env`.
 
 ## Data source

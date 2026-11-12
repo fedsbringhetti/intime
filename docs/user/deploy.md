@@ -8,13 +8,13 @@ The service runs as a single container on the home server (Orange Pi 5, ARM64, D
 
 | Item | Value |
 |------|-------|
-| Container name | `gtt-personal-api` |
-| Image | `federicosbringhetti/gtt-personal-api:<version>` (also `latest`) |
+| Container name | `intime` |
+| Image | `federicosbringhetti/intime:<version>` (also `latest`) |
 | Ports | host `8100` → container `8080` (host 8080 is taken) |
-| Folder on the server | `/home/federico/gtt-personal-api/` |
+| Folder on the server | `/home/federico/intime/` |
 | Bind mount | `./data` → `/data` (SQLite: `gtt.db`, `gtt.db-wal`, `gtt.db-shm`) |
-| Environment | from `.env`: `API_TOKEN`; optional `RUST_LOG`, `STOPS_SYNC_TIME`, `DEFAULT_FEEDS`, `UPSTREAM_URL`, `UPSTREAM_TIMEOUT_SECS`, `DEPARTURES_CACHE_SECS`, `GTT_REALTIME_URL`, `GTT_TRIP_UPDATES_CACHE_SECS`, `GTT_ALERTS_POLL_SECS`, `GTT_GTFS_URL`; for Web Push, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (generate the key with `docker run --rm federicosbringhetti/gtt-personal-api vapid-keys`, see [configuration.md](configuration.md#web-push-keys)). Set by the image or compose: `BIND_ADDR`, `DATA_DIR`, `TZ` |
-| Health check | `gtt-personal-api healthcheck` (calls `/health`), every 30 s |
+| Environment | from `.env`: `API_TOKEN`; optional `RUST_LOG`, `STOPS_SYNC_TIME`, `DEFAULT_FEEDS`, `UPSTREAM_URL`, `UPSTREAM_TIMEOUT_SECS`, `DEPARTURES_CACHE_SECS`, `GTT_REALTIME_URL`, `GTT_TRIP_UPDATES_CACHE_SECS`, `GTT_ALERTS_POLL_SECS`, `GTT_GTFS_URL`; for Web Push, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (generate the key with `docker run --rm federicosbringhetti/intime vapid-keys`, see [configuration.md](configuration.md#web-push-keys)). Set by the image or compose: `BIND_ADDR`, `DATA_DIR`, `TZ` |
+| Health check | `intime healthcheck` (calls `/health`), every 30 s |
 | User in the container | `app`, uid 10001 |
 
 ## 1. Build and push (on the Mac)
@@ -29,7 +29,7 @@ docker login -u federicosbringhetti
 scripts/build-image.sh --push
 ```
 
-Equivalent to `docker buildx build --platform linux/arm64 -t federicosbringhetti/gtt-personal-api:<version> -t federicosbringhetti/gtt-personal-api:latest --push .`. Without `--push` the script only builds the image locally, to try it first.
+Equivalent to `docker buildx build --platform linux/arm64 -t federicosbringhetti/intime:<version> -t federicosbringhetti/intime:latest --push .`. Without `--push` the script only builds the image locally, to try it first.
 
 The image is public. `.dockerignore` keeps secrets, local data, tests, docs, Git history and the local `web/node_modules` and `web/dist` out of the build context. The build compiles the web app in a Node stage and embeds it in the binary; the final image contains only that binary on top of `debian:bookworm-slim`.
 
@@ -38,19 +38,19 @@ The image is public. `.dockerignore` keeps secrets, local data, tests, docs, Git
 Create the folder and the data directory. The data directory must belong to uid 10001: if Docker creates it, it belongs to root and the service exits with `cannot open the database in /data`.
 
 ```bash
-ssh -t federico@192.168.1.13 'mkdir -p /home/federico/gtt-personal-api/data && sudo chown 10001 /home/federico/gtt-personal-api/data'
+ssh -t federico@192.168.1.13 'mkdir -p /home/federico/intime/data && sudo chown 10001 /home/federico/intime/data'
 ```
 
 Copy the compose file:
 
 ```bash
-scp docker-compose.yml federico@192.168.1.13:/home/federico/gtt-personal-api/
+scp docker-compose.yml federico@192.168.1.13:/home/federico/intime/
 ```
 
 Create `.env` directly on the server, so the token never leaves it (see `.env.example` for the optional variables):
 
 ```bash
-ssh federico@192.168.1.13 'cd /home/federico/gtt-personal-api && printf "API_TOKEN=%s\n" "$(openssl rand -hex 32)" > .env && chmod 600 .env'
+ssh federico@192.168.1.13 'cd /home/federico/intime && printf "API_TOKEN=%s\n" "$(openssl rand -hex 32)" > .env && chmod 600 .env'
 ```
 
 The server clock must be synchronized via NTP (`timedatectl` shows `System clock synchronized: yes`): the nightly sync and, later, scheduled notifications depend on it.
@@ -58,7 +58,7 @@ The server clock must be synchronized via NTP (`timedatectl` shows `System clock
 ## 3. Start
 
 ```bash
-ssh federico@192.168.1.13 'cd /home/federico/gtt-personal-api && docker compose up -d'
+ssh federico@192.168.1.13 'cd /home/federico/intime && docker compose up -d'
 ```
 
 On first start the service downloads all stops (a few seconds).
@@ -66,13 +66,13 @@ On first start the service downloads all stops (a few seconds).
 ## 4. Check
 
 ```bash
-ssh federico@192.168.1.13 'docker inspect --format "{{.State.Health.Status}}" gtt-personal-api'
+ssh federico@192.168.1.13 'docker inspect --format "{{.State.Health.Status}}" intime'
 ```
 
 Should print `healthy` within about 30 seconds.
 
 ```bash
-ssh federico@192.168.1.13 'cd /home/federico/gtt-personal-api && docker compose logs --tail 50'
+ssh federico@192.168.1.13 'cd /home/federico/intime && docker compose logs --tail 50'
 ```
 
 Expect `listening on 0.0.0.0:8080` and `stop index synced: ... stops`.
@@ -82,13 +82,13 @@ curl -s http://192.168.1.13:8100/health
 ```
 
 ```bash
-ssh federico@192.168.1.13 'cd /home/federico/gtt-personal-api && curl -s -H "Authorization: Bearer $(sed -n "s/^API_TOKEN=//p" .env)" http://localhost:8100/api/status'
+ssh federico@192.168.1.13 'cd /home/federico/intime && curl -s -H "Authorization: Bearer $(sed -n "s/^API_TOKEN=//p" .env)" http://localhost:8100/api/status'
 ```
 
 `stop_index.count` should be about 19,000 and `upstream.ok` should be `true`.
 
 ```bash
-ssh federico@192.168.1.13 'docker stats --no-stream gtt-personal-api'
+ssh federico@192.168.1.13 'docker stats --no-stream intime'
 ```
 
 Memory at idle should stay under 50 MB.

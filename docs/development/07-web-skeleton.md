@@ -1,6 +1,6 @@
 # 7. Web app skeleton
 
-> Phase 2, step 1 · PR [#11](https://github.com/fedsbringhetti/gtt-personal-api/pull/11)
+> Phase 2, step 1 · PR [#11](https://github.com/fedsbringhetti/intime/pull/11)
 
 ## Goal
 
@@ -290,11 +290,11 @@ For instant reloads while working on the interface, keep `cargo run` going and s
 Docker (a temporary tag, so the local `0.1.0` and `latest` images are left alone):
 
 ```bash
-docker buildx build --platform linux/arm64 --tag gtt-personal-api:web-skeleton --load .
+docker buildx build --platform linux/arm64 --tag intime:web-skeleton --load .
 ```
 
 ```bash
-docker run --rm -p 18080:8080 gtt-personal-api:web-skeleton
+docker run --rm -p 18080:8080 intime:web-skeleton
 ```
 
 Measured on 2026-10-30: full build about 1 minute (the Node stage runs in parallel with `cargo chef cook`); rebuild after editing only `App.svelte` 7 seconds, with `npm ci` and the Rust dependencies from cache. Binary 15,344,976 bytes against 15,331,432 for `v0.1.0` (13.5 KB more); download size unchanged at 37.3 MB (`docker save | gzip`); 33 MB of memory after the first sync.

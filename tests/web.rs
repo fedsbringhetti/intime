@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use gtt_personal_api::web::WebAssets;
+use intime::web::WebAssets;
 use rust_embed::RustEmbed;
 
 use common::{NOW, Options, at, get_text, offline_app, request};

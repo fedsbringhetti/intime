@@ -1,9 +1,11 @@
-# Development plan — gtt-personal-api
+# Development plan — intime
 
 Personal service for real-time GTT public transport departures in Turin, hosted in Docker on an Orange Pi 5 (ARM64).
 Inspired by [madbob/gtt-pirate-api](https://github.com/madbob/gtt-pirate-api).
 
 This document defines the phases. The detailed plan for each phase is written together, one phase at a time, before development starts.
+
+Renamed from `gtt-personal-api` to `intime`, the name of the app, on 2026-11-05: the GitHub repository, the crate and binary, the Docker image and container, and the server folder.
 
 ## Context
 
@@ -52,8 +54,8 @@ This document defines the phases. The detailed plan for each phase is written to
 - **Language**: everything in the repository is in English: file and directory names, document contents, code, identifiers, branch names, commit messages, PR titles and descriptions.
 - **Branches**: `main` always works. Every change starts from `main` in a short-lived branch (`feat/...`, `fix/...`, `docs/...`) and merges back through a PR once CI (`cargo fmt`, `cargo clippy`, `cargo test`) passes. No `dev` branch.
 - **Releases**: semantic version tags on `main` (`v0.1.0` at the end of Phase 1, `v0.2.0` at the end of Phase 2, ...), each with a GitHub Release and notes. To try a version on the Pi before releasing it, use a pre-release tag (`v0.4.0-rc1`).
-- **Docker images**: built on the Mac for `linux/arm64` and pushed to Docker Hub as `federicosbringhetti/gtt-personal-api` (public), tagged with the version and `latest`.
-- **Deployment**: first deployment in Phase 4, once the web app, rules and notifications work locally (decided on 2026-10-29 with the web app; moved to Phase 4 on 2026-11-02). Until then the Docker image is only used for local testing. Then: on the home server in `/home/federico/gtt-personal-api/`, host port 8100, data in the `./data` bind mount. The compose file pins an exact version (e.g. `:0.1.0`), never `latest`; rolling back means changing the tag. Steps in [docs/user/deploy.md](docs/user/deploy.md).
+- **Docker images**: built on the Mac for `linux/arm64` and pushed to Docker Hub as `federicosbringhetti/intime` (public), tagged with the version and `latest`.
+- **Deployment**: first deployment in Phase 4, once the web app, rules and notifications work locally (decided on 2026-10-29 with the web app; moved to Phase 4 on 2026-11-02). Until then the Docker image is only used for local testing. Then: on the home server in `/home/federico/intime/`, host port 8100, data in the `./data` bind mount. The compose file pins an exact version (e.g. `:0.1.0`), never `latest`; rolling back means changing the tag. Steps in [docs/user/deploy.md](docs/user/deploy.md).
 
 ---
 

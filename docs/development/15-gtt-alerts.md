@@ -1,6 +1,6 @@
 # 15. GTT alerts
 
-> Phase 3, step 2 · PR [#22](https://github.com/fedsbringhetti/gtt-personal-api/pull/22)
+> Phase 3, step 2 · PR [#22](https://github.com/fedsbringhetti/intime/pull/22)
 
 ## Goal
 

@@ -30,7 +30,7 @@ An HTTP API, packaged as a Docker image for the Orange Pi 5, that can:
 | C | Users | Single user: favorites are not tied to an account |
 | D | Delay history | Not in this phase; the schema does not rule it out. Decided later: yes, for tracked runs, in Phase 3 |
 | E | Compatible `/query.php?stop=` endpoint | No |
-| F | How the image gets to the Orange Pi | Built on the Mac (`linux/arm64`, native on Apple Silicon) and pushed to Docker Hub as a public image (`federicosbringhetti/gtt-personal-api`), following the home server conventions. Changed from GHCR on 2026-10-29 |
+| F | How the image gets to the Orange Pi | Built on the Mac (`linux/arm64`, native on Apple Silicon) and pushed to Docker Hub as a public image (`federicosbringhetti/intime`), following the home server conventions. Changed from GHCR on 2026-10-29 |
 
 ## 3. What we know about the upstream
 
@@ -59,7 +59,7 @@ Verified on 2026-10-29 against `https://plan.muoversiatorino.it/otp/routers/mato
 A single Rust crate.
 
 ```
-gtt-personal-api/
+intime/
 ├── Cargo.toml
 ├── migrations/               # SQL migrations (sqlx)
 ├── src/
@@ -275,7 +275,7 @@ In paths, `{stop}` accepts the GTT code (`39`) or the full `gtfsId` (`gtt:39`, `
   - runtime `debian:bookworm-slim` with only `ca-certificates` and `tzdata`;
   - non-root user.
 - **Health check** without curl in the image: the binary itself has a `healthcheck` subcommand that calls `/health`.
-- **docker-compose.yml**, following the home server conventions: folder `/home/federico/gtt-personal-api/`, explicit `container_name`, host port 8100 → container 8080 (8080 is taken on the host), bind mount `./data:/data` (what the backup saves), `env_file: .env` with `.env.example` in the repository, `TZ: Europe/Rome`, `healthcheck`, `restart: unless-stopped`, 128 MB memory limit. The `data` folder must belong to uid 10001.
+- **docker-compose.yml**, following the home server conventions: folder `/home/federico/intime/`, explicit `container_name`, host port 8100 → container 8080 (8080 is taken on the host), bind mount `./data:/data` (what the backup saves), `env_file: .env` with `.env.example` in the repository, `TZ: Europe/Rome`, `healthcheck`, `restart: unless-stopped`, 128 MB memory limit. The `data` folder must belong to uid 10001.
 - **`scripts/build-image.sh [--push]`** builds the arm64 image tagged with the Cargo version and `latest`, and optionally pushes it to Docker Hub.
 - Target: image under 40 MB. Measured: 38 MB to download, 138 MB uncompressed (108 MB Debian base, 15 MB binary). A distroless base would roughly halve the uncompressed size but removes the shell used for debugging on the Pi.
 - Deployment steps: [../user/deploy.md](../user/deploy.md).

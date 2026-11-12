@@ -1,6 +1,6 @@
 # 5. Robustness
 
-> Phase 1, step 5 · PR [#7](https://github.com/fedsbringhetti/gtt-personal-api/pull/7)
+> Phase 1, step 5 · PR [#7](https://github.com/fedsbringhetti/intime/pull/7)
 
 ## Goal
 
@@ -179,7 +179,7 @@ curl -s -H "Authorization: Bearer secret" http://localhost:8080/api/status
 ```
 
 ```bash
-UPSTREAM_URL=http://127.0.0.1:9/graphql RUST_LOG=info,gtt_personal_api::upstream=debug cargo run
+UPSTREAM_URL=http://127.0.0.1:9/graphql RUST_LOG=info,intime::upstream=debug cargo run
 ```
 
 With an unreachable upstream, a departures request shows the retry in the logs, answers 502 after about 0.3 s, and `/api/status` reports the failure.

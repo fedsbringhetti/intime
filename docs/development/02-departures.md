@@ -1,6 +1,6 @@
 # 2. Departures
 
-> Phase 1, step 2 · PR [#4](https://github.com/fedsbringhetti/gtt-personal-api/pull/4)
+> Phase 1, step 2 · PR [#4](https://github.com/fedsbringhetti/intime/pull/4)
 
 ## Goal
 

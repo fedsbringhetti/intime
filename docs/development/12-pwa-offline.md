@@ -1,6 +1,6 @@
 # 12. Installable and offline
 
-> Phase 2, step 6 · PR [#17](https://github.com/fedsbringhetti/gtt-personal-api/pull/17)
+> Phase 2, step 6 · PR [#17](https://github.com/fedsbringhetti/intime/pull/17)
 
 ## Goal
 

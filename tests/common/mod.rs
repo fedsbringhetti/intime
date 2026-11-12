@@ -9,7 +9,8 @@ use axum::{
     http::{HeaderMap, Method, Request, StatusCode, header},
 };
 use chrono::{DateTime, Utc};
-use gtt_personal_api::{
+use http_body_util::BodyExt;
+use intime::{
     api::{self, AppState},
     db,
     departures::DeparturesService,
@@ -23,7 +24,6 @@ use gtt_personal_api::{
     upstream::UpstreamClient,
     web::WebAssets,
 };
-use http_body_util::BodyExt;
 use rust_embed::RustEmbed;
 use tower::ServiceExt;
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};

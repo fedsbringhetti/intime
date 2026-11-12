@@ -1,6 +1,6 @@
 # 6. Docker
 
-> Phase 1, step 6 · PR [#8](https://github.com/fedsbringhetti/gtt-personal-api/pull/8)
+> Phase 1, step 6 · PR [#8](https://github.com/fedsbringhetti/intime/pull/8)
 
 ## Goal
 
@@ -17,7 +17,7 @@ Package the service as a Docker image for the Orange Pi 5 (`linux/arm64`) and pr
 | **Host port 8100 → container 8080** | 8080 is taken on the server; the code does not change. |
 | **Bind mount `./data`, not a named volume** | The server's backup script saves folders next to `docker-compose.yml`. Requires the folder to belong to uid 10001. |
 | **Secrets only in `.env`** (`env_file`), `.env.example` in the repository | The image is public; nothing secret can be in it or in the compose file. |
-| **Docker Hub** (`federicosbringhetti/gtt-personal-api`) instead of GHCR | Server conventions; decision F updated. |
+| **Docker Hub** (`federicosbringhetti/intime`) instead of GHCR | Server conventions; decision F updated. |
 | **Deployment deferred to the web app phase** | Nothing to use on the server until there is a user interface. Planned with Phase 3 at the time; the phases were swapped on 2026-10-30, so it became Phase 2; on 2026-11-02 it moved to Phase 4, after the whole service. |
 
 ## Files
@@ -53,12 +53,12 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime
 # ... ca-certificates, tzdata, user app (uid 10001), /data owned by app
-COPY --from=builder /app/target/release/gtt-personal-api /usr/local/bin/gtt-personal-api
+COPY --from=builder /app/target/release/intime /usr/local/bin/intime
 USER app
 ENV BIND_ADDR=0.0.0.0:8080 DATA_DIR=/data TZ=Europe/Rome RUST_LOG=info
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["gtt-personal-api", "healthcheck"]
-ENTRYPOINT ["gtt-personal-api"]
+    CMD ["intime", "healthcheck"]
+ENTRYPOINT ["intime"]
 ```
 
 1. **planner** reduces the project to `recipe.json`: the list of dependencies, without our code.
@@ -76,7 +76,7 @@ match args.as_slice() {
     [] => serve(config).await,
     ["healthcheck"] => healthcheck(config.bind_addr).await,
     _ => {
-        eprintln!("usage: gtt-personal-api [healthcheck | vapid-keys]");
+        eprintln!("usage: intime [healthcheck | vapid-keys]");
         ExitCode::from(2)
     }
 }
@@ -90,9 +90,9 @@ match args.as_slice() {
 
 ```yaml
 services:
-  gtt-personal-api:
-    image: federicosbringhetti/gtt-personal-api:0.2.0
-    container_name: gtt-personal-api
+  intime:
+    image: federicosbringhetti/intime:0.2.0
+    container_name: intime
     restart: unless-stopped
     ports:
       - "8100:8080"
@@ -102,7 +102,7 @@ services:
     environment:
       TZ: Europe/Rome
     healthcheck:
-      test: ["CMD", "gtt-personal-api", "healthcheck"]
+      test: ["CMD", "intime", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -162,5 +162,5 @@ The container should be `healthy` within a few seconds; the service is on `http:
 ## Later changes
 
 - The first real deployment will follow [../user/deploy.md](../user/deploy.md), planned in Phase 4.
-- [Chapter 17](17-web-push.md) adds the `vapid-keys` subcommand (handled before the configuration is read, so `docker run --rm federicosbringhetti/gtt-personal-api vapid-keys` works with no environment) and moves the argument parsing above `Config::from_env`; the excerpt above is shown as it is today.
+- [Chapter 17](17-web-push.md) adds the `vapid-keys` subcommand (handled before the configuration is read, so `docker run --rm federicosbringhetti/intime vapid-keys` works with no environment) and moves the argument parsing above `Config::from_env`; the excerpt above is shown as it is today.
 - [Step 7](07-web-skeleton.md) adds a first stage, `web`, that builds the web app with Node; the builder copies its output before `cargo build`.

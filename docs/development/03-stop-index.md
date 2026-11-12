@@ -1,6 +1,6 @@
 # 3. Stop index
 
-> Phase 1, step 3 · PR [#5](https://github.com/fedsbringhetti/gtt-personal-api/pull/5)
+> Phase 1, step 3 · PR [#5](https://github.com/fedsbringhetti/intime/pull/5)
 
 ## Goal
 

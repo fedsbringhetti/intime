@@ -1,6 +1,6 @@
 # 17. Web Push
 
-> Phase 3, step 4 · PR [#24](https://github.com/fedsbringhetti/gtt-personal-api/pull/24)
+> Phase 3, step 4 · PR [#24](https://github.com/fedsbringhetti/intime/pull/24)
 
 ## Goal
 

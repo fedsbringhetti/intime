@@ -9,7 +9,7 @@ use axum::{
 };
 use base64ct::{Base64UrlUnpadded, Encoding};
 use chrono::Utc;
-use gtt_personal_api::{
+use intime::{
     notify::vapid::VapidKey,
     push::{EndpointPolicy, NewSubscription},
 };

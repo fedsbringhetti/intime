@@ -229,7 +229,7 @@ Implementations: `WebPushNotifier` and `LogNotifier` (development and tests).
 
 ### How Web Push works here
 
-1. The server has a **VAPID key pair**, generated once (`gtt-personal-api vapid-keys` subcommand); the private key lives in `.env`.
+1. The server has a **VAPID key pair**, generated once (`intime vapid-keys` subcommand); the private key lives in `.env`.
 2. The web app, after the user taps "attiva notifiche", asks the browser for a push subscription with the server's public key and sends it to `POST /api/push/subscriptions`. On iPhone this works only when the web app was added to the Home Screen (iOS 16.4+), and the permission prompt must follow a tap.
 3. To notify, the server encrypts the payload and posts it to the subscription's endpoint (Apple's or Google's push service). This is an outbound call: it does not go through Cloudflare Access.
 4. The service worker in the web app shows the notification; tapping it opens the right page (departures of a stop, live page of a tracking).

@@ -29,7 +29,7 @@ COPY --from=web /web/dist web/dist
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime
-LABEL org.opencontainers.image.source="https://github.com/fedsbringhetti/gtt-personal-api" \
+LABEL org.opencontainers.image.source="https://github.com/fedsbringhetti/intime" \
       org.opencontainers.image.description="Personal API for real-time GTT departures in Turin"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata \
@@ -37,7 +37,7 @@ RUN apt-get update \
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
     && mkdir /data \
     && chown app /data
-COPY --from=builder /app/target/release/gtt-personal-api /usr/local/bin/gtt-personal-api
+COPY --from=builder /app/target/release/intime /usr/local/bin/intime
 
 USER app
 ENV BIND_ADDR=0.0.0.0:8080 \
@@ -48,5 +48,5 @@ EXPOSE 8080
 VOLUME /data
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["gtt-personal-api", "healthcheck"]
-ENTRYPOINT ["gtt-personal-api"]
+    CMD ["intime", "healthcheck"]
+ENTRYPOINT ["intime"]

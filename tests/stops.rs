@@ -3,7 +3,7 @@ mod common;
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use gtt_personal_api::stops::sync::{SyncError, sync_once};
+use intime::stops::sync::{SyncError, sync_once};
 use serde_json::{Value, json};
 use wiremock::{Mock, ResponseTemplate, matchers::method};
 

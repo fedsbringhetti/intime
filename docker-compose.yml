@@ -1,9 +1,9 @@
-# Deployment on the home server, in /home/federico/gtt-personal-api/. See docs/user/deploy.md.
+# Deployment on the home server, in /home/federico/intime/. See docs/user/deploy.md.
 services:
-  gtt-personal-api:
+  intime:
     # Pin an exact version; to roll back, set the previous one and run `docker compose up -d`.
-    image: federicosbringhetti/gtt-personal-api:0.2.0
-    container_name: gtt-personal-api
+    image: federicosbringhetti/intime:0.2.0
+    container_name: intime
     restart: unless-stopped
     ports:
       # Host port 8080 is taken; the service still listens on 8080 inside the container.
@@ -15,7 +15,7 @@ services:
     environment:
       TZ: Europe/Rome
     healthcheck:
-      test: ["CMD", "gtt-personal-api", "healthcheck"]
+      test: ["CMD", "intime", "healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s

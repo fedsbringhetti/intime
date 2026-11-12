@@ -1,6 +1,6 @@
 # 9. Search and stop
 
-> Phase 2, step 3 · PR [#14](https://github.com/fedsbringhetti/gtt-personal-api/pull/14)
+> Phase 2, step 3 · PR [#14](https://github.com/fedsbringhetti/intime/pull/14)
 
 ## Goal
 

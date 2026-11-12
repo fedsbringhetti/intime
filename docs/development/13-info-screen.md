@@ -1,6 +1,6 @@
 # 13. Info screen
 
-> Phase 2, step 7 · PR [#18](https://github.com/fedsbringhetti/gtt-personal-api/pull/18)
+> Phase 2, step 7 · PR [#18](https://github.com/fedsbringhetti/intime/pull/18)
 
 ## Goal
 

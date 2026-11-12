@@ -1,4 +1,4 @@
-# gtt-personal-api
+# intime
 
 Personal service for real-time GTT public transport departures in Turin: stop search by name and position, real-time departures with line filters, favorite stops, and a web app for the phone, installable as "InTime". A Rust backend with SQLite, packaged as a Docker image for an Orange Pi 5.
 Inspired by [madbob/gtt-pirate-api](https://github.com/madbob/gtt-pirate-api).

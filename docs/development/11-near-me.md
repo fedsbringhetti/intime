@@ -1,6 +1,6 @@
 # 11. Near me
 
-> Phase 2, step 5 · PR [#16](https://github.com/fedsbringhetti/gtt-personal-api/pull/16)
+> Phase 2, step 5 · PR [#16](https://github.com/fedsbringhetti/intime/pull/16)
 
 ## Goal
 

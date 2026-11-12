@@ -3,7 +3,7 @@
 use std::io::{Cursor, Write};
 
 use chrono::{DateTime, Utc};
-use gtt_personal_api::{
+use intime::{
     db,
     gtt::static_data::{CheckOutcome, GttStatic, StaticError},
     upstream::UpstreamError,
