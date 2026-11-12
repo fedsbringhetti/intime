@@ -10,8 +10,9 @@ A small HTTP service for real-time public transport departures in Turin. It read
 - **departures** with real-time times, delays and line filters, cached so the upstream is called as little as possible;
 - **GTT's own predictions** for urban runs, read from GTT's open data and merged into the departures, and **GTT's service alerts**, linked to the stops they concern (Phase 3);
 - **favorite stops** with labels, line filters and a manual order;
-- **rules** for notifications: a summary of the departures at a fixed time, or the tracking of a run, on chosen days, skipping public holidays (Phase 3; stored and scheduled on a calendar, not sent yet);
-- **Web Push**: the server signs and encrypts notifications and hands them to the browsers' push services; a Notifiche screen turns them on for the phone and sends a test (Phase 3; nothing sends on its own yet);
+- **rules** for notifications: a summary of the departures at a fixed time, or the tracking of a run, on chosen days, skipping public holidays (Phase 3; summaries are sent by the scheduler, trackings come with step 6);
+- **Web Push**: the server signs and encrypts notifications and hands them to the browsers' push services; a Notifiche screen turns them on for the phone and sends a test (Phase 3);
+- **a scheduler** that sends each summary rule at its time, then the new alerts of its stop, and keeps a log of what was sent (Phase 3, step 5);
 - **resilience**: retries, stale data when the upstream fails, a status endpoint, optional token;
 - **a web app** for the phone, served by the same binary, installable on the phone as "InTime" (Phase 2).
 
@@ -31,6 +32,7 @@ It is a single Rust binary, with the web app embedded in it and an SQLite databa
   │  favorites ──►│ favorites (SQLite)    ││   │
   │  rules ──────►│ rules (SQLite)        ││   │
   │  push ───────►│ subscriptions (SQLite)││   │
+  │  notifications►│ log of sent (SQLite)  ││   │
   │  status ─────►│ upstream health ◄─────┼┤   │
   └───────────────┴───────────────────────┼┼───┘
                                           ││
@@ -47,11 +49,15 @@ It is a single Rust binary, with the web app embedded in it and an SQLite databa
   static data task ── nightly check ──────────────────► GTT GTFS static (gtt_gtfs.zip)
                        └──► gtt_stops (SQLite)
 
+  scheduler task ── every 15 s ──► rules, rule_runs, notified_alerts (SQLite)
+       │                           departures, alerts in memory
+       └──► notifier (below)
+
   notifier ── encrypted, signed (VAPID) POST ─────────► the browser's push service
   (stored subscriptions)                                 (FCM, Apple, Mozilla, Windows)
 ```
 
-`main.rs` reads the configuration, opens the database (applying migrations), starts the background tasks (stop index sync; with GTT's data on, the alerts and GTT's static data) and serves HTTP until Ctrl+C or SIGTERM, finishing requests in progress.
+`main.rs` reads the configuration, opens the database (applying migrations), starts the background tasks (stop index sync; with GTT's data on, the alerts and GTT's static data; the scheduler) and serves HTTP until Ctrl+C or SIGTERM, finishing requests in progress.
 
 The router answers `/health` and `/api/*`; every other GET goes to the web app (next section).
 
@@ -106,18 +112,18 @@ Only `stops.txt` of GTT's GTFS static archive is used (Phase 3, decision Q): it 
 
 ### Rules
 
-A rule is a **summary** (at a time, the next departures from a stop) or the **tracking** of a run (line and scheduled time at a stop), on some days of the week (Phase 3, section 5). Step 3 stores them and computes their calendar; the scheduler that acts on it comes with step 5.
+A rule is a **summary** (at a time, the next departures from a stop) or the **tracking** of a run (line and scheduled time at a stop), on some days of the week (Phase 3, section 5). Step 3 stores them and computes their calendar; the scheduler (below) acts on summaries; trackings wait for step 6.
 
 - **Storage** (`src/rules/mod.rs`): one row per rule in `rules`. The fields of each kind are a JSON `config`, read into typed structs (`SummaryConfig`, `TrackConfig`) and checked on the way in; the API returns them as `kind` plus `config`, as stored (decision AG). Missing numbers get their defaults when a rule is created, and the defaults are stored.
 - **Checks** (`src/api/rules.rs`): the stop must be in the index and every line must serve it; the stored name of a line is the index's.
 - **Calendar** (`src/rules/schedule.rs`): `Schedule::on(date)` says what a rule does on a day: due at a time, not one of its days, a holiday it skips, paused, disabled. `Schedule::next(now)` is the next occurrence. Days are calendar days in Europe/Rome (decision AI); a local time skipped when daylight saving starts moves to the next valid minute, and one repeated when it ends is the first one.
 - **Holidays** (`src/rules/holidays.rs`): Italian national holidays (fixed dates, Easter and Easter Monday computed, 4 October from 2026) and 24 June, by their Italian names (decision K).
 - **Pause**: `paused_until` is the last day skipped, included; "salta oggi" pauses until today. A pause without a date turns the rule off (decision AH).
-- The API adds `today` and `next` to every rule, computed at each request from the clock (decision AJ).
+- The API adds `today` and `next` to every rule, computed at each request from the clock (decision AJ); `today.run` is the status of today's row in `rule_runs`, or `null`.
 
 ### Notifications
 
-Web Push delivers a notification to the phone through the push service of its browser (Phase 3, section 7). Step 4 builds the channel and a test; the scheduler that uses it is step 5.
+Web Push delivers a notification to the phone through the push service of its browser (Phase 3, section 7). Step 4 builds the channel and a test; the scheduler (next section) uses it.
 
 1. **Identity** (`src/notify/vapid.rs`): the server has a P-256 key pair, `VAPID_PRIVATE_KEY`; the public key is derived from it and served at `GET /api/push/key`, which the browser needs to subscribe. `intime vapid-keys` prints a new pair. Without a key (or without `VAPID_SUBJECT`) there is no Web Push: `LogNotifier` only writes notifications to the log, and the key and subscription endpoints answer `push_disabled`.
 2. **Subscriptions** (`src/push.rs`, table `push_subscriptions`): one row per device, keyed by its endpoint (the push service URL), with the browser's keys and a label (`iPhone`, `Mac`, ...) taken from the `User-Agent`. Subscribing again updates the row (decision AP). Only `https` endpoints on the default port of a known push service are accepted (decision AM); the keys are checked when they arrive.
@@ -125,7 +131,21 @@ Web Push delivers a notification to the phone through the push service of its br
 4. **Outcome**: a 2xx is `sent`; 404 or 410 means the subscription expired and it is deleted (`removed`); anything else is `failed`, logged, and the subscription kept. One device failing never stops the others.
 5. **On the phone** (`web/src/sw.ts`): the service worker shows the notification (`push`) and, when it is tapped, focuses the app and navigates to its `url` or opens it (`notificationclick`). A payload it cannot read still shows a generic notification.
 
-The `notifications` table that records what was sent comes with step 5, and `GET /api/notifications` with it.
+6. **Log** (`src/scheduler/store.rs`, table `notifications`): every notification the scheduler sends, and every `POST /api/rules/{id}/test`, is recorded with its `kind` (`summary`, `alert`), title, body, url, channel and the counts of the `SendReport`; `rule_id` becomes null when the rule is deleted. The test of `POST /api/notifications/test` is not recorded (decision AL). `GET /api/notifications` returns it, newest first. Rows older than 90 days are deleted.
+
+### Scheduler
+
+A background task (`src/scheduler/mod.rs`) wakes up every `SCHEDULER_TICK_SECS` (15) and calls `Scheduler::tick(now)`; the time comes from the `Clock`, so tests call `tick` with chosen times (Phase 3, section 6 and [plan/steps/phase-3-step-5.md](plan/steps/phase-3-step-5.md)).
+
+- **Occurrences**: for each summary rule, `Schedule::on` gives the occurrence of today and of yesterday (a 23:58 summary seen at 00:01 still counts). Tracking rules are ignored until step 6.
+- **Once per rule and day**: the row `(rule_id, date)` of `rule_runs` (calendar day in Europe/Rome) is inserted as `running` before sending, then set to `sent` or `failed`. After a crash a row left `running` becomes `failed` at startup and is never sent again: a missing summary is better than a duplicate. Changing the time after the rule ran does not send it again that day.
+- **Missed runs** (decision M): an occurrence found due is sent if it is at most `MISSED_RUN_GRACE_MINUTES` (5) old; otherwise it is recorded as `skipped`, also for a rule created or moved to a time already past.
+- **Upstream failure**: stale departures (up to 2 minutes) are used. On an error the run is `pending` and retried at each tick until the grace ends; then it is `failed` and one notification, "Riepilogo non disponibile", is sent. A `pending` run found after the grace (even if the upstream is back, or after a restart) never sends the summary: it becomes `failed`, with the notice only if it is at most twice the grace late, silently beyond that.
+- **The message** (`summary_notification`, shared with `POST /api/rules/{id}/test`): title `🚌 <rule> — <stop> (<code>)`, one line per departure (`4 → Falchera 07:43 (+2) tra 3'`, `(orario)` when only scheduled, `cancellata`), or "Nessuna partenza nei prossimi N minuti."; `tag: rule-<id>` so today's replaces yesterday's; `url` the stop page. Lines are cut so the payload stays under 3000 bytes.
+- **New alerts**: at each tick, when the alerts were read again, the ids of the active alerts are stored in `notified_alerts`. The first read is a baseline: stored as handled, never sent. Right after a rule's summary, the alerts of its stop (and of its lines, or naming no line) first seen after the rule was created and not yet handled are sent: one notification each up to two, a single list above that; each is marked handled right after its own send, so a failure midway never resends the earlier ones. They never go out at night: they wait for an occurrence.
+- **Upkeep**: at the first tick of each day, `notifications` and `rule_runs` older than 90 days are deleted.
+
+Known limits are listed in [development/18-scheduler.md](development/18-scheduler.md#pitfalls).
 
 ### Stop index
 
@@ -151,7 +171,7 @@ Stored in SQLite with a 0-based `position` kept contiguous: inserts go at the en
 
 ### Data
 
-One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in WAL mode). Migrations in `migrations/` are compiled into the binary and applied at startup. Tables: `stops`, `stops_fts`, `sync_state` (last stop sync and last check of GTT's static data, with its version), `favorites`, `gtt_stops` (GTT's stop ids and ours), `rules` (kind-specific fields as JSON in `config`), `push_subscriptions` (one row per device that enabled notifications: endpoint, the browser's keys, label).
+One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in WAL mode). Migrations in `migrations/` are compiled into the binary and applied at startup. Tables: `stops`, `stops_fts`, `sync_state` (last stop sync and last check of GTT's static data, with its version), `favorites`, `gtt_stops` (GTT's stop ids and ours), `rules` (kind-specific fields as JSON in `config`), `push_subscriptions` (one row per device that enabled notifications: endpoint, the browser's keys, label), `rule_runs` (one row per summary rule and day: status, due time), `notifications` (log of what was sent), `notified_alerts` (alert ids seen, and whether they were handled).
 
 ## Code map
 
@@ -184,14 +204,16 @@ One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in W
 | `src/notify/vapid.rs` | the VAPID key: parsing, generation, the signed `Authorization` header |
 | `src/notify/webpush.rs` | `WebPushNotifier`: encryption, sending, removing expired subscriptions |
 | `src/notify/log.rs` | `LogNotifier`, used without a VAPID key |
+| `src/scheduler/mod.rs` | the tick, occurrences, missed runs, summary and alert messages, `spawn` |
+| `src/scheduler/store.rs` | `SchedulerStore`: `rule_runs`, the notifications log, `notified_alerts` |
 | `src/push.rs` | push subscriptions: storage, checks of a browser's keys, which push services are allowed |
 | `src/api/mod.rs` | router, shared `AppState`, token layer |
 | `src/api/stops.rs` | search, nearby, details and departures handlers |
 | `src/api/favorites.rs` | favorites handlers and input cleaning; favorites with their departures |
 | `src/api/alerts.rs` | `/api/alerts` |
 | `src/api/push.rs` | VAPID public key, subscribe and unsubscribe |
-| `src/api/notifications.rs` | `/api/notifications/test` |
-| `src/api/rules.rs` | rules handlers: checks, defaults, pause and resume, today and next |
+| `src/api/notifications.rs` | `/api/notifications/test`, `/api/notifications` |
+| `src/api/rules.rs` | rules handlers: checks, defaults, pause and resume, today and next, `test` and `runs` |
 | `src/api/status.rs`, `health.rs` | `/api/status`, `/health` |
 | `src/api/auth.rs` | `API_TOKEN` middleware |
 | `src/api/error.rs` | error codes and JSON error responses |
@@ -226,4 +248,4 @@ Reading order for a first look: `main.rs` → `api/mod.rs` → `api/stops.rs` �
 - **Release builds on the Mac** fail (the linker produces a malformed `sqlx-macros` library); debug builds and Docker builds work.
 - **Single user**: no accounts; favorites are shared by whoever has the token.
 
-Phase 2, the web app, is done (`v0.2.0`, [plan/phase-2.md](plan/phase-2.md)). Phase 3 is in progress: GTT open data, rules, trip tracking and Web Push notifications ([plan/phase-3.md](plan/phase-3.md)); GTT's predictions (step 1), alerts (step 2) and rules without sending (step 3) and Web Push (step 4: the channel, subscriptions and a test) are done. Then Phase 4, Cloudflare Access and the first deployment ([plan/phase-4.md](plan/phase-4.md)).
+Phase 2, the web app, is done (`v0.2.0`, [plan/phase-2.md](plan/phase-2.md)). Phase 3 is in progress: GTT open data, rules, trip tracking and Web Push notifications ([plan/phase-3.md](plan/phase-3.md)); GTT's predictions (step 1), alerts (step 2) and rules without sending (step 3), Web Push (step 4: the channel, subscriptions and a test) and the scheduler with summaries (step 5) are done. Then Phase 4, Cloudflare Access and the first deployment ([plan/phase-4.md](plan/phase-4.md)).
