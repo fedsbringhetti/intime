@@ -90,7 +90,7 @@ GTT's own real-time feeds (`GTT_REALTIME_URL`, from Phase 3) are GTFS Realtime o
 
 ## Commands
 
-Before every PR:
+Before every PR, `just check`, which runs these three (the `justfile` holds the other development commands; `just` lists them):
 
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test

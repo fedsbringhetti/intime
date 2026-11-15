@@ -28,3 +28,4 @@ What becomes easier or harder; what was rejected and why.
 | # | Decision | Date |
 |---|----------|------|
 | 1 | [Plans, backlog and ADRs in the repository](0001-plans-backlog-and-adrs-in-the-repository.md) | 2026-11-12 |
+| 2 | [A justfile for development commands](0002-justfile-for-development-commands.md) | 2026-11-15 |
