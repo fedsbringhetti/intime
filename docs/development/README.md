@@ -31,6 +31,8 @@ The planning that came before the code is in [../plan/](../plan/phase-1.md); the
 
 ## Workflow
 
+Development commands are recipes in the `justfile` at the root: `just` lists them (install with `brew install just`). Each recipe runs a command or script that also works without `just`, which is what CI does; see [ADR 0002](../adr/0002-justfile-for-development-commands.md).
+
 ### Branches and PRs
 
 - `main` always works. Every step is a short-lived branch from `main` (`feat/...`, `fix/...`, `docs/...`) merged through a PR once CI passes.
@@ -38,6 +40,12 @@ The planning that came before the code is in [../plan/](../plan/phase-1.md); the
 - Releases are semantic version tags on `main` (`v0.1.0`, ...).
 
 ### Checks
+
+```bash
+just check
+```
+
+It runs these three commands in order (`just check-rust`, `just check-web`, `just check-docs` run one each):
 
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
@@ -56,14 +64,22 @@ The second command checks the web app: types (`svelte-check` and `tsc`), unit te
 ### Working on the web app
 
 ```bash
-cargo run
+just dev
 ```
 
 ```bash
-cd web && npm run dev
+just web
 ```
 
-Open `http://localhost:5173`: Vite reloads the page on every save and forwards `/api` to the backend on 8080. To see the web app as the binary serves it, run `npm run build` and open `http://localhost:8080` (debug builds read `web/dist/` from disk, so no Rust rebuild is needed). Node 24 is the reference version (`web/.nvmrc`), the same as Docker and CI.
+The first runs `cargo run`, the second `npm run dev` in `web/`. Open `http://localhost:5173`: Vite reloads the page on every save and forwards `/api` to the backend on 8080. To see the web app as the binary serves it, run `npm run build` and open `http://localhost:8080` (debug builds read `web/dist/` from disk, so no Rust rebuild is needed). Node 24 is the reference version (`web/.nvmrc`), the same as Docker and CI.
+
+### Cleaning the build folder
+
+```bash
+just sweep
+```
+
+It runs `scripts/sweep.sh`. Cargo never deletes superseded builds: artifact names carry a hash of the compiler, `Cargo.lock`, features and profile, not of the sources, so every toolchain change or lock update leaves a full copy behind and `target/` only grows. The script finds the folder `cargo clean` would delete (`target_directory` from `cargo metadata`, which honours `CARGO_TARGET_DIR` and `build.target-dir`), shows its size, says so when it is outside the project and may be shared with other projects, and asks `Delete it? [y/N]`. Only `y` or `yes` runs `cargo clean`; any other answer, or no terminal (EOF), deletes nothing. Nothing in the folder is source, but the next `cargo build`, `cargo run` or `cargo test` starts cold. `tools/gtfs-rt-codegen/` is its own workspace with its own `target/`, which the script does not touch.
 
 ### Tests
 
@@ -83,7 +99,7 @@ Open `http://localhost:5173`: Vite reloads the page on every save and forwards `
 | New setting | `Config` in `src/config.rs` with a default and a test, then [../user/configuration.md](../user/configuration.md) and `.env.example` |
 | Web app code | `web/src/`: components in `.svelte` files, logic in `.ts` modules under `lib/` with a `.test.ts` next to them |
 | Node version | `web/.nvmrc` (CI reads it) and the `FROM node:` line in the `Dockerfile` |
-| GTFS Realtime types | replace `tools/gtfs-rt-codegen/gtfs-realtime.proto` with the new official file, run `cargo run --manifest-path tools/gtfs-rt-codegen/Cargo.toml`, commit the regenerated `src/gtt/proto.rs` |
+| GTFS Realtime types | replace `tools/gtfs-rt-codegen/gtfs-realtime.proto` with the new official file, run `just codegen` (`cargo run --manifest-path tools/gtfs-rt-codegen/Cargo.toml`), commit the regenerated `src/gtt/proto.rs` |
 
 ## Writing a chapter
 

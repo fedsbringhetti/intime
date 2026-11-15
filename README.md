@@ -43,6 +43,8 @@ docker compose up -d
 
 The service is then on `http://localhost:8100`; requests need `Authorization: Bearer <API_TOKEN from .env>`.
 
+Development commands (checks, dev servers, image, cleaning the build folder) are recipes in the `justfile`: run `just` to list them, and see [docs/development/README.md](docs/development/README.md#workflow).
+
 ## Documentation
 
 Start at [docs/README.md](docs/README.md).
