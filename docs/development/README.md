@@ -64,6 +64,14 @@ cd web && npm run dev
 
 Open `http://localhost:5173`: Vite reloads the page on every save and forwards `/api` to the backend on 8080. To see the web app as the binary serves it, run `npm run build` and open `http://localhost:8080` (debug builds read `web/dist/` from disk, so no Rust rebuild is needed). Node 24 is the reference version (`web/.nvmrc`), the same as Docker and CI.
 
+### Cleaning the build folder
+
+```bash
+scripts/sweep.sh
+```
+
+Cargo never deletes superseded builds: artifact names carry a hash of the compiler, `Cargo.lock`, features and profile, not of the sources, so every toolchain change or lock update leaves a full copy behind and `target/` only grows. The script finds the folder `cargo clean` would delete (`target_directory` from `cargo metadata`, which honours `CARGO_TARGET_DIR` and `build.target-dir`), shows its size, says so when it is outside the project and may be shared with other projects, and asks `Delete it? [y/N]`. Only `y` or `yes` runs `cargo clean`; any other answer, or no terminal (EOF), deletes nothing. Nothing in the folder is source, but the next `cargo build`, `cargo run` or `cargo test` starts cold. `tools/gtfs-rt-codegen/` is its own workspace with its own `target/`, which the script does not touch.
+
 ### Tests
 
 - **Unit tests** sit at the bottom of each source file in a `#[cfg(test)] mod tests` block. They test pure functions: times, normalization, ranking helpers, config parsing, sync scheduling, token parsing.
