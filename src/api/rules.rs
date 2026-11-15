@@ -6,7 +6,7 @@ use axum::{
     },
     http::StatusCode,
 };
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Weekday};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -18,13 +18,18 @@ use super::{
 };
 use crate::{
     departures::FETCH_WINDOW,
+    notify::SendReport,
     rules::{
         Kind, NewRule, Rule, RuleConfig, SummaryConfig, TrackConfig, hh_mm,
         schedule::{Day, local_date},
         weekdays,
     },
+    scheduler::{SummaryError, send_and_log, store::RuleRun, summary_notification},
     stops::StopInfo,
 };
+
+/// How many runs `GET /api/rules/{id}/runs` returns.
+const RUNS_LIMIT: i64 = 30;
 
 const MAX_NAME_LEN: usize = 100;
 const MAX_LINE_LEN: usize = 10;
@@ -66,9 +71,39 @@ pub struct RuleView {
     /// The stop no longer exists after a sync.
     missing: bool,
     /// What the rule does today, in Europe/Rome (decision AJ).
-    today: Day,
+    today: Today,
     /// The next occurrence; `None` when the rule will not run again.
     next: Option<DateTime<Tz>>,
+}
+
+/// What the rule does today, and how today's run went (`None`: no run yet).
+#[derive(Debug, Serialize)]
+struct Today {
+    #[serde(flatten)]
+    day: Day,
+    run: Option<RunView>,
+}
+
+/// The run's status as the scheduler wrote it (`running`, `pending`, `sent`, `skipped`,
+/// `failed`).
+#[derive(Debug, Serialize)]
+struct RunView {
+    status: String,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunsResponse {
+    runs: Vec<RuleRun>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RuleTestResponse {
+    channel: &'static str,
+    #[serde(flatten)]
+    report: SendReport,
+    title: String,
+    body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +326,50 @@ pub async fn resume(
     save(&state, rule).await
 }
 
+/// Sends the summary now, whatever its days, pause or `enabled` (decision 11): it is logged in
+/// the notifications but writes no run. Tracking rules answer 422.
+pub async fn test(
+    State(state): State<AppState>,
+    id: Result<Path<i64>, PathRejection>,
+) -> Result<Json<RuleTestResponse>, ApiError> {
+    let Path(id) = id.map_err(|err| ApiError::InvalidRequest(err.body_text()))?;
+    let rule = find(&state, id).await?;
+    let now = state.clock.now();
+    let notification = summary_notification(state.departures.as_ref(), &state.stops, &rule, now)
+        .await
+        .map_err(|err| match err {
+            SummaryError::NotSummary => ApiError::NotSummary(id),
+            SummaryError::Upstream(err) => err.into(),
+        })?;
+    let (notification, report) = send_and_log(
+        state.notifier.as_ref(),
+        &state.scheduler,
+        Some(id),
+        "summary",
+        notification,
+        now,
+    )
+    .await?;
+    Ok(Json(RuleTestResponse {
+        channel: state.notifier.channel(),
+        report,
+        title: notification.title,
+        body: notification.body,
+    }))
+}
+
+/// The last runs of the rule, newest day first.
+pub async fn runs(
+    State(state): State<AppState>,
+    id: Result<Path<i64>, PathRejection>,
+) -> Result<Json<RunsResponse>, ApiError> {
+    let Path(id) = id.map_err(|err| ApiError::InvalidRequest(err.body_text()))?;
+    find(&state, id).await?;
+    Ok(Json(RunsResponse {
+        runs: state.scheduler.recent_runs(id, RUNS_LIMIT).await?,
+    }))
+}
+
 async fn find(state: &AppState, id: i64) -> Result<Rule, ApiError> {
     state.rules.get(id).await?.ok_or(ApiError::RuleNotFound(id))
 }
@@ -310,8 +389,20 @@ async fn view(state: &AppState, rule: Rule, index_ready: bool) -> Result<RuleVie
     let stop = state.stops.get(&rule.stop_id).await?;
     let now = state.clock.now();
     let schedule = rule.schedule();
+    let date = local_date(now);
+    let run = state
+        .scheduler
+        .get_run(rule.id, date)
+        .await?
+        .map(|run| RunView {
+            status: run.status,
+            updated_at: run.updated_at,
+        });
     Ok(RuleView {
-        today: schedule.on(local_date(now)),
+        today: Today {
+            day: schedule.on(date),
+            run,
+        },
         next: schedule.next(now),
         // Before the first sync every stop would look missing.
         missing: index_ready && stop.is_none(),

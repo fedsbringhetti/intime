@@ -18,6 +18,8 @@ Environment variables, all optional. In Docker they go in `.env` (see `.env.exam
 | `GTT_GTFS_URL` | `https://www.gtt.to.it/open_data/gtt_gtfs.zip` | GTT's static data, for its `stops.txt`: checked every night 10 minutes after `STOPS_SYNC_TIME`, downloaded only when it changed. Empty disables it: alerts are then linked to stops by their lines only |
 | `VAPID_PRIVATE_KEY` | unset | the server's Web Push key (see below); unset or empty disables Web Push: notifications are only written to the log |
 | `VAPID_SUBJECT` | unset | contact of the Web Push identity, `mailto:you@example.com` or an `https:` URL; required when `VAPID_PRIVATE_KEY` is set, ignored otherwise |
+| `SCHEDULER_TICK_SECS` | `15` | how often the scheduler looks for rules that are due, at least 1 |
+| `MISSED_RUN_GRACE_MINUTES` | `5` | a summary found due up to this many minutes late is still sent (server restarting, upstream down); later it is skipped. At least 1 |
 | `RUST_LOG` | `info` | log level, e.g. `debug` or `info,intime::upstream=debug` |
 
 ### Web Push keys
