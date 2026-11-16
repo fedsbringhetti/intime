@@ -10,6 +10,7 @@
   import NotFound from './screens/NotFound.svelte'
   import Search from './screens/Search.svelte'
   import Stop from './screens/Stop.svelte'
+  import Tracking from './screens/Tracking.svelte'
 
   // Runs once the app is on the page; the returned function runs when it is removed.
   $effect(() => startNavigation())
@@ -32,6 +33,10 @@
     <Favorites />
   {:else if navigation.route.name === 'notifications'}
     <Notifications />
+  {:else if navigation.route.name === 'tracking'}
+    {#key navigation.route.id}
+      <Tracking id={navigation.route.id} />
+    {/key}
   {:else if navigation.route.name === 'info'}
     <Info />
   {:else if navigation.route.name === 'design' && designPage}

@@ -29,6 +29,7 @@ mod push;
 mod rules;
 mod status;
 mod stops;
+mod trackings;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -86,6 +87,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rules/{id}/resume", post(rules::resume))
         .route("/api/rules/{id}/test", post(rules::test))
         .route("/api/rules/{id}/runs", get(rules::runs))
+        .route(
+            "/api/trackings",
+            get(trackings::list).post(trackings::create),
+        )
+        .route(
+            "/api/trackings/{id}",
+            get(trackings::get).delete(trackings::delete),
+        )
         .route("/api/push/key", get(push::public_key))
         .route(
             "/api/push/subscriptions",

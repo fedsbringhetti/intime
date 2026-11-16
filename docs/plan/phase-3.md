@@ -1,6 +1,6 @@
 # Phase 3 — GTT data, rules, trip tracking and notifications: detailed plan
 
-Status: **approved** on 2026-11-02, after Phase 2 (`v0.2.0`). Decisions G–M confirmed on 2026-10-30; GTT open data (N–Q) and libraries, navigation and mockups (U–Y) added on 2026-11-02. Mockups approved on 2026-11-04 (step 0), with decisions Z–AC; decisions O and Q changed and AD–AE added with step 2 (alerts), the same day. Decision K changed and AF–AJ added with step 3 (rules), on 2026-11-05. Decisions AK–AR added with step 4 (Web Push), the same day.
+Status: **approved** on 2026-11-02, after Phase 2 (`v0.2.0`). Decisions G–M confirmed on 2026-10-30; GTT open data (N–Q) and libraries, navigation and mockups (U–Y) added on 2026-11-02. Mockups approved on 2026-11-04 (step 0), with decisions Z–AC; decisions O and Q changed and AD–AE added with step 2 (alerts), the same day. Decision K changed and AF–AJ added with step 3 (rules), on 2026-11-05. Decisions AK–AR added with step 4 (Web Push), the same day. Decisions AS–AV added with step 5 (scheduler), on 2026-11-12. Decision P changed and AW–BA added with step 6 (tracking), on 2026-11-16.
 
 Until 2026-10-30 this was Phase 2, with Telegram as the notification channel. The phases were swapped so that notifications can use Web Push from the web app built in Phase 2.
 
@@ -46,7 +46,7 @@ Checked on the Mac in Chrome, where `localhost` allows Web Push (there is no Xco
 | M | Missed schedule (server off or restarting at due time) | Summaries: sent if at most 5 minutes late, otherwise skipped and logged. Tracking: resumes from its saved state; an alert that is no longer useful (the bus has left) is dropped, never sent late |
 | N | Real-time source (`PLAN.md` decision 10) | For **urban** runs, GTT's trip updates; otherwise OpenTripPlanner's real time; otherwise the scheduled time. **One source per departure**, never mixed. OpenTripPlanner still decides which runs serve the stop, their line, destination, scheduled time and stop sequence. Merge rules in section 4 |
 | O | Service alerts | From GTT's `alerts.aspx`, read every 5 minutes. Linked **by stop** when the alert lists stops, **by line** only when it lists none (changed on 2026-11-04, step 2: a line alert lists nearly every stop of its line, while a "stop suspended" alert lists one stop and every line serving it, so linking by line would show it at hundreds of stops). A new alert on a line of an active rule is notified once |
-| P | Vehicle positions | From GTT's `vehicle_position.aspx`, read only while a tracking is active. Shown on the live page only: no new notification for "no vehicle assigned" (can be added later). The vehicle map is a future idea in `PLAN.md` |
+| P | Vehicle positions | **From GTT's trip updates** (decision AW, changed on 2026-11-16, step 6; it was `vehicle_position.aspx`, read only while a tracking is active). Shown on the live page only: no new notification for "no vehicle assigned" (can be added later). The vehicle map is a future idea in `PLAN.md` |
 | Q | GTFS static (`PLAN.md` decision 11) | `stops.txt` only, to link alerts to stops (step 2). Checked **every night** with a conditional request (`If-Modified-Since`): GTT answers `304` with no body when the zip has not changed, so the 20 MB are downloaded only after GTT rebuilds it (changed from weekly on 2026-11-04, step 2). `routes.txt` was dropped on 2026-11-04 with decision Z; line names in alerts come from the stop index (decision AD) |
 | U | Decoding GTFS Realtime | **Types generated once from the official `.proto` and kept in the repository** (`src/gtt/proto.rs`, by `tools/gtfs-rt-codegen` with `prost-build` and `protox`, a protobuf compiler in pure Rust); the service depends on `prost` only, with no build script and no protobuf compiler in Docker or CI. Changed on 2026-11-04: the `gtfs-realtime` crate (0.2) first chosen generates its types at build time and needs `protoc`. Rejected: a `build.rs` with `prost-build` and `protox` (about thirty more crates at every clean build); installing `protoc` on the Mac, in Docker and in CI |
 | V | Web Push library | **`web-push-native`** (0.5): pure Rust (`aes128gcm` encryption; the VAPID signature is ours since step 4, decision AK), builds an `http::Request` that we send with our `reqwest` and rustls. Rejected: `web-push` 0.11, last released in February 2025, on `hyper` 0.14 and bringing OpenSSL, which the project does not use |
@@ -76,6 +76,11 @@ Checked on the Mac in Chrome, where `localhost` allows Web Push (there is no Xco
 | AT | Alerts already active | **Not sent**: only alerts first seen after the scheduler's first start and after the rule was created. The ids read at the first start are stored as handled. Old alerts stay in the stop's banner (decided 2026-11-12, step 5) |
 | AU | Empty or failed summary | **A short message anyway**: "Nessuna partenza nei prossimi 30 minuti." or, after the grace of decision M, "Riepilogo non disponibile: dati non raggiungibili." (decided 2026-11-12, step 5). Rejected: silence, with the outcome only in the rule's state |
 | AV | Scheduled-only departures in a summary | Marked **`(orario)`**: `15 → Sassi 07:47 (orario) tra 7'` (decided 2026-11-12, step 5) |
+| AW | Vehicle and stops away | **From the run's trip update**: every run in `trip_update.aspx` carries its vehicle (`label` 9648) and its stop updates start at the vehicle's next stop, so stops away = tracked sequence − first update's sequence. `vehicle_position.aspx` is not read: its vehicles have only the route, no trip id, start date or stop sequence (measured 2026-11-16, 368 vehicles), so they cannot be linked to a run (decided 2026-11-16, step 6, [plan](steps/phase-3-step-6.md)) |
+| AX | Reminders already past | A reminder is sent only while it is still within 2 minutes of its threshold; one already past when tracking starts, after a restart or when the delay shrinks is **skipped, never sent late** (decision M; decided 2026-11-16, step 6) |
+| AY | When delay history starts | `observed_delays` is **written from step 6**, at the end of every tracked run; step 9 adds `/api/delays` and shows it (decided 2026-11-16, step 6). Rejected: waiting for step 9, losing the runs tracked meanwhile |
+| AZ | Alerts already notified | **Per rule** (`rule_notified_alerts`), so a summary and a tracking on the same stop both get a new alert (decided 2026-11-16, step 6; backlog item). The baseline stays global |
+| BA | "Smetti di seguire" on a recurring rule | **Stops today's run only**; the rule runs again on its next day. On a one-off tracking it deletes it (decided 2026-11-16, step 6) |
 
 ## 3. What we know about the upstream
 
@@ -112,7 +117,6 @@ Consequence: tracking polls the stop departures (already cached since Phase 1, n
 |------|------|-------|
 | `trip_update.aspx` | on demand, when departures are computed | 20 s; concurrent requests share one call |
 | `alerts.aspx` | every 5 minutes, in the background | until the next read |
-| `vehicle_position.aspx` | every 15 s, only while at least one tracking is active | until the next read |
 | `gtt_gtfs.zip` (`stops.txt`, from step 2) | every night, and at startup when missing or not checked for a day; a conditional request, downloaded only when changed | stored in SQLite |
 
 - Messages are decoded with the generated types in `src/gtt/proto.rs` (decision U); the GTFS static archive is read with `zip` and `csv` (decision W).
@@ -142,9 +146,9 @@ Mismatches show up in `/api/status`; a sudden rise usually means the two sources
 
 ### Vehicle positions in tracking
 
-- **Vehicle assigned**: a vehicle whose run is the tracked one.
-- **Stops away**: the nearest stop of the run (coordinates from `trip(id).stoptimesForDate`) compared with the tracked stop's sequence.
-- Shown on the live page only (decision P).
+- **Vehicle assigned**: the vehicle in the tracked run's trip update (decision AW).
+- **Stops away**: the tracked stop's sequence minus the sequence of the run's first stop update (the vehicle's next stop); unknown when the update is older than 3 minutes.
+- Shown on the live page only (decision P). `vehicle_position.aspx` is not read (decision AW).
 
 ## 5. Rule model
 
@@ -206,18 +210,20 @@ waiting ──(watch_from)──▶ searching ──(run found)──▶ trackin
                                                          └──(cancelled)──▶ cancelled
 ```
 
-- **searching**: recurring rules look for the departure with the same line and a scheduled time within `tolerance_minutes`; one-off trackings already know the `trip_id`. Once found, the `trip_id` is stored for the rest of the day.
-- **tracking**: polls every 30 seconds. Events, each notified at most once:
-  - each threshold in `alert_before_minutes`, relative to the expected departure;
-  - delay reaching `delay_alert_minutes`; a new alert only if the delay grows by 3 more minutes;
+Also `stopped` ("Smetti di seguire", decision BA), `skipped` (an occurrence too late to start) and `failed` (a one-off with no data 60 minutes after its time). `waiting` is never stored: it is the API's phase before `at − watch_from`, when there is no row. A one-off starts directly as `tracking`.
+
+- **searching**: recurring rules look for the departure with the same line (case-insensitive) and a scheduled time within `tolerance_minutes`, the closest, the earlier on ties; one-off trackings already know the `trip_id`. Once found, the `trip_id` and the stop sequence are stored for the rest of the day.
+- **tracking**: evaluated at every scheduler tick (15 s) on the departures of the stop (20-second cache); there is no separate poll. Events, each notified at most once:
+  - each threshold in `alert_before_minutes`, relative to the expected departure; a threshold already more than 2 minutes past is skipped, never sent late (decision AX);
+  - delay reaching `delay_alert_minutes`, only when the time is not just scheduled; a new alert only if the delay grows by 3 more minutes;
   - cancellation (by GTT or by OpenTripPlanner, merge rule 4), with the next departure of the same line.
-- **done**: the expected departure has passed; the final delay is written to the delay history (decision L).
-- **not_found**: 10 minutes before the scheduled time the run is still missing; one alert with the closest departures of that line, then stop.
-- State (phase, `trip_id`, events already notified, last expected time) is saved in `rule_runs`, so tracking survives a restart.
-- Notifications of the same tracking share a Web Push `tag`, so a newer one replaces the older one instead of piling up (to verify on iPhone).
+- **done**: the expected departure has passed (or the run vanished within 2 minutes of it); the final delay is written to `observed_delays` (decisions L, AY).
+- **not_found**: 10 minutes before the scheduled time the run is still missing; one alert with the two closest departures of that line, only if the time has not passed, then stop.
+- State (`TrackState`: trip, times, delay, source, reminders done, last delay alerted, events sent) is JSON in `rule_runs.state`, so tracking survives a restart. The state is saved before the notices are sent, so a notice is never duplicated.
+- Notifications of the same tracking share a Web Push `tag` (`track-<rule_id>`), so a newer one replaces the older one instead of piling up (to verify on iPhone).
 
 ### Live page
-`GET /api/trackings/{id}` returns the current state of a tracking (phase, scheduled and expected time, delay, source of the time; for urban runs, whether a vehicle is assigned and how many stops away it is). The web app polls it while the page is open and shows a countdown; no notification is needed for routine updates.
+`GET /api/trackings/{id}` returns the current state of a tracking (phase, scheduled and expected time, delay, source of the time, the notifications sent and planned; for urban runs, whether a vehicle is assigned and how many stops away it is). The web app polls it every 15 seconds while the page is open and shows a countdown; no notification is needed for routine updates.
 
 ## 7. Notifications (Web Push)
 
@@ -297,7 +303,7 @@ CREATE TABLE rules (
 CREATE TABLE rule_runs (
   rule_id    INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
   date       TEXT NOT NULL,           -- calendar day in Europe/Rome (decision AI), not the service date
-  status     TEXT NOT NULL,           -- no CHECK. Step 5: running, pending, sent, skipped, failed. Step 6 adds: waiting, searching, tracking, done, not_found, cancelled
+  status     TEXT NOT NULL,           -- no CHECK. Step 5: running, pending, sent, skipped, failed. Step 6 adds: searching, tracking, done, not_found, cancelled, stopped (waiting is computed, never stored)
   due_at     TEXT NOT NULL,           -- the occurrence's time, UTC
   state      TEXT,                    -- JSON; NULL for summaries; tracking: trip_id, events notified, last expected time
   updated_at TEXT NOT NULL,
@@ -329,7 +335,7 @@ CREATE TABLE notifications (
 );
 CREATE INDEX notifications_sent_at ON notifications (sent_at);
 
--- One row per tracked run: shared by every rule (and, later, every user) tracking it.
+-- Step 6 (decision AY); migration 0007. One row per tracked run: shared by every rule (and, later, every user) tracking it.
 CREATE TABLE observed_delays (
   service_date   TEXT NOT NULL,
   trip_id        TEXT NOT NULL,
@@ -358,6 +364,14 @@ CREATE TABLE notified_alerts (
   first_seen_at TEXT NOT NULL,
   notified_at   TEXT                  -- NULL: not handled yet; the baseline is stored as handled
 );
+
+-- Step 6 (decision AZ); migration 0007. Alerts sent per rule.
+CREATE TABLE rule_notified_alerts (
+  rule_id     INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+  alert_id    TEXT NOT NULL,
+  notified_at TEXT NOT NULL,
+  PRIMARY KEY (rule_id, alert_id)
+);
 ```
 
 `config` is JSON because the two rule kinds have different fields; it is validated with typed Rust structs on read and write.
@@ -372,8 +386,8 @@ CREATE TABLE notified_alerts (
 | POST | `/api/rules/{id}/resume` | resume: turn on, clear the pause |
 | POST | `/api/rules/{id}/test` | run the rule now and send the result |
 | GET | `/api/rules/{id}/runs` | recent runs |
-| POST | `/api/trackings` | track a run on the fly: `{"stop": "39", "trip_id": "gtt:..."}` |
-| GET, DELETE | `/api/trackings/{id}` | live state of a tracking; stop it |
+| GET, POST | `/api/trackings` | trackings in progress (soonest first); track a run on the fly: `{"stop": "39", "trip_id": "gtt:...", "alert_before_minutes"?, "delay_alert_minutes"?}` (`404 trip_not_found`, `422 trip_not_trackable`; the same run again answers `200` with its settings replaced) |
+| GET, DELETE | `/api/trackings/{id}` | live state of a tracking, by rule id (`404 tracking_not_found`); stop it: a one-off is deleted, a recurring rule's run of today is `stopped` (decision BA) |
 | GET | `/api/push/key` | VAPID public key for the web app |
 | POST, DELETE | `/api/push/subscriptions` | register or remove this device |
 | POST | `/api/notifications/test` | send a test notification to every device |
@@ -383,6 +397,7 @@ CREATE TABLE notified_alerts (
 
 Changes to existing endpoints:
 
+- **Rules** (`/api/rules`): one-off trackings are hidden from the list and their ids answer `404 rule_not_found`; they are managed through `/api/trackings`.
 - **Departures** (`/api/stops/{stop}/departures`, `/api/favorites/departures`): each departure gets `source` (`gtt`, `otp`, `scheduled`). `realtime` stays, true when `source` is not `scheduled`. The departures of a stop also get `alerts`, the active alerts linked to the stop (decisions O and AE).
 - **`/api/status`**: a `gtt` entry with the outcome of each feed, the age of the last data, today's number of mismatches and median difference from OpenTripPlanner (decision AC), the alerts read and the version of the static data.
 
@@ -409,14 +424,14 @@ The bottom bar gets a fifth entry, "Notifiche" (decision X).
 | `VAPID_PRIVATE_KEY` | empty | Web Push key (secret, in `.env`); when empty, `LogNotifier` is used |
 | `VAPID_SUBJECT` | empty | contact for push services, e.g. `mailto:...` |
 | `SCHEDULER_TICK_SECS` | `15` | scheduler tick |
-| `TRACK_POLL_SECS` | `30` | polling interval during tracking |
 | `MISSED_RUN_GRACE_MINUTES` | `5` | decision M |
 | `UPSTREAM_DOWN_ALERT_MINUTES` | `5` | delay before the "down" alert |
 | `GTT_REALTIME_URL` | `https://percorsieorari.gtt.to.it/das_gtfsrt` | base URL of the three real-time feeds; empty disables GTT data (OpenTripPlanner only) |
 | `GTT_GTFS_URL` | `https://www.gtt.to.it/open_data/gtt_gtfs.zip` | GTFS static archive, checked every night 10 minutes after `STOPS_SYNC_TIME`; empty disables it (alerts are then linked by line only) |
 | `GTT_TRIP_UPDATES_CACHE_SECS` | `20` | cache of the trip updates |
 | `GTT_ALERTS_POLL_SECS` | `300` | alerts reading interval |
-| `GTT_VEHICLES_POLL_SECS` | `15` | vehicle positions reading interval during tracking |
+
+No variable for vehicles or tracking: the vehicle comes from the trip updates (decision AW) and trackings are evaluated at every scheduler tick (planned `GTT_VEHICLES_POLL_SECS` and `TRACK_POLL_SECS` dropped in step 6).
 
 ## 13. Tests
 
@@ -440,10 +455,10 @@ Each step in its own branch with a PR to `main` and its chapter in `docs/develop
 3. **Rules**: the `rules` table, typed config, CRUD API with pause and resume, holiday calendar, occurrence calculation with fake clock. Decision K changed and AF–AJ added on 2026-11-05.
 4. **Web Push**: VAPID keys, subscriptions, `WebPushNotifier`, `LogNotifier`, push handling in the service worker, the Notifiche tab with "Attiva notifiche" and the test notification. Check: a test notification arrives in Chrome on the Mac. Decisions AK–AR added on 2026-11-05.
 5. **Scheduler and summaries**: tick, the `rule_runs` table (decision AF), summary rules, `/api/rules/{id}/test`, notification of new alerts on the lines of a rule. Plan in [steps/phase-3-step-5.md](steps/phase-3-step-5.md); decisions AS–AV added on 2026-11-12. Done on branch `feat/scheduler`; chapter [18](../development/18-scheduler.md).
-6. **Tracking**: state machine, "Avvisami" on a departure, recurring tracking rules, vehicle positions, the live page.
+6. **Tracking**: state machine, "Avvisami" on a departure, recurring tracking rules, vehicle from trip updates, the live page, `observed_delays`, alerts notified per rule. Plan in [steps/phase-3-step-6.md](steps/phase-3-step-6.md); decision P changed and AW–BA added on 2026-11-16. Trackings are evaluated at every scheduler tick (no `TRACK_POLL_SECS`).
 7. **Rules in the web app**: list and editor in the Notifiche tab: create, edit, pause, skip today, test, delete.
 8. **Health alerts**: down, recovered, schema changed, sync failed, GTT feeds.
-9. **Delay history**: `observed_delays` and `/api/delays`, shown on the live page and next to tracking rules.
+9. **Delay history**: `/api/delays` (the table is filled from step 6, decision AY), shown on the live page and next to tracking rules.
 
 ## 15. Out of scope for this phase
 

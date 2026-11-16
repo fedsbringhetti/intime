@@ -65,6 +65,10 @@ pub struct TrackConfig {
     /// Reminders before the expected departure, longest first.
     pub alert_before_minutes: Vec<u32>,
     pub delay_alert_minutes: u32,
+    /// One-off trackings: the run followed (OpenTripPlanner's trip id, `gtt:` included).
+    /// Recurring rules find their run each day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trip_id: Option<String>,
 }
 
 /// The kind of a rule, as stored in the `kind` column.

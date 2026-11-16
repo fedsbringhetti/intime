@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::SqlitePool;
 
+use super::tracking::TrackState;
 use crate::notify::SendReport;
 
 /// Rows of `notifications` and `rule_runs` older than this are deleted (decision 13).
@@ -282,19 +283,43 @@ impl SchedulerStore {
         Ok(())
     }
 
-    /// Marks the alerts as handled; a missing id is ignored.
+    /// Ids not sent yet to the rule: first seen after `after` (the rule's `created_at`), not
+    /// part of the baseline and without a row in `rule_notified_alerts` (decision AZ), oldest
+    /// first.
+    pub async fn unnotified_alert_ids(
+        &self,
+        rule_id: i64,
+        after: DateTime<Utc>,
+    ) -> Result<Vec<String>, SchedulerStoreError> {
+        Ok(sqlx::query_scalar(
+            "SELECT n.alert_id FROM notified_alerts n
+             WHERE n.notified_at IS NULL AND n.first_seen_at > ?
+               AND NOT EXISTS (SELECT 1 FROM rule_notified_alerts r
+                               WHERE r.rule_id = ? AND r.alert_id = n.alert_id)
+             ORDER BY n.first_seen_at, n.alert_id",
+        )
+        .bind(after)
+        .bind(rule_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// Marks the alerts as sent to the rule, and to it only.
     pub async fn mark_alerts_notified(
         &self,
+        rule_id: i64,
         ids: &[String],
         now: DateTime<Utc>,
     ) -> Result<(), SchedulerStoreError> {
         let mut tx = self.pool.begin().await?;
         for id in ids {
             sqlx::query(
-                "UPDATE notified_alerts SET notified_at = ? WHERE alert_id = ? AND notified_at IS NULL",
+                "INSERT OR IGNORE INTO rule_notified_alerts (rule_id, alert_id, notified_at)
+                 VALUES (?, ?, ?)",
             )
-            .bind(now)
+            .bind(rule_id)
             .bind(id)
+            .bind(now)
             .execute(&mut *tx)
             .await?;
         }
@@ -302,20 +327,235 @@ impl SchedulerStore {
         Ok(())
     }
 
-    /// Ids not handled yet and first seen after `after` (a rule's `created_at`), oldest first.
-    pub async fn unnotified_alert_ids(
+    // Tracking runs (step 6)
+
+    /// Inserts a tracking run with the given status; `false` when `(rule_id, date)` has one.
+    pub async fn insert_track_run(
         &self,
-        after: DateTime<Utc>,
-    ) -> Result<Vec<String>, SchedulerStoreError> {
-        Ok(sqlx::query_scalar(
-            "SELECT alert_id FROM notified_alerts
-             WHERE notified_at IS NULL AND first_seen_at > ?
-             ORDER BY first_seen_at, alert_id",
+        rule_id: i64,
+        date: NaiveDate,
+        status: &str,
+        due_at: DateTime<Utc>,
+        state: &TrackState,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SchedulerStoreError> {
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO rule_runs (rule_id, date, status, due_at, state, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind(after)
-        .fetch_all(&self.pool)
-        .await?)
+        .bind(rule_id)
+        .bind(date)
+        .bind(status)
+        .bind(due_at)
+        .bind(state_json(state))
+        .bind(now)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(inserted > 0)
     }
+
+    /// Saves status and state of a run still `searching` or `tracking`; `false` when it is not
+    /// (stopped meanwhile, rule deleted): the caller then sends nothing (decision 13).
+    pub async fn update_track_run(
+        &self,
+        rule_id: i64,
+        date: NaiveDate,
+        status: &str,
+        state: &TrackState,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SchedulerStoreError> {
+        let updated = sqlx::query(
+            "UPDATE rule_runs SET status = ?, state = ?, updated_at = ?
+             WHERE rule_id = ? AND date = ? AND status IN ('searching', 'tracking')",
+        )
+        .bind(status)
+        .bind(state_json(state))
+        .bind(now)
+        .bind(rule_id)
+        .bind(date)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(updated > 0)
+    }
+
+    /// Puts a run back to `status` with a new state whatever it was (a one-off tracking asked
+    /// for again after it ended). `false` when there is no such run.
+    pub async fn reset_track_run(
+        &self,
+        rule_id: i64,
+        date: NaiveDate,
+        status: &str,
+        state: &TrackState,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SchedulerStoreError> {
+        let updated = sqlx::query(
+            "UPDATE rule_runs SET status = ?, state = ?, updated_at = ?
+             WHERE rule_id = ? AND date = ?",
+        )
+        .bind(status)
+        .bind(state_json(state))
+        .bind(now)
+        .bind(rule_id)
+        .bind(date)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(updated > 0)
+    }
+
+    /// The tracking run of a rule on a day, with its state (default when unreadable).
+    pub async fn get_track_run(
+        &self,
+        rule_id: i64,
+        date: NaiveDate,
+    ) -> Result<Option<TrackRun>, SchedulerStoreError> {
+        Ok(self.get_run(rule_id, date).await?.map(TrackRun::from_run))
+    }
+
+    /// Runs `searching` or `tracking` with a date from `from` to `to`, both included, soonest
+    /// due first.
+    pub async fn active_track_runs(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+    ) -> Result<Vec<TrackRun>, SchedulerStoreError> {
+        let runs: Vec<RuleRun> = sqlx::query_as(
+            "SELECT rule_id, date, status, due_at, state, updated_at FROM rule_runs
+             WHERE status IN ('searching', 'tracking') AND date >= ? AND date <= ?
+             ORDER BY due_at, rule_id",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(runs.into_iter().map(TrackRun::from_run).collect())
+    }
+
+    /// "Smetti di seguire" on one day (decision BA): an active run becomes `stopped`, a missing
+    /// one is inserted as `stopped`; any other status stays. `true` when the day is now stopped.
+    pub async fn stop_track_run(
+        &self,
+        rule_id: i64,
+        date: NaiveDate,
+        due_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, SchedulerStoreError> {
+        let state = TrackState::default();
+        if self
+            .insert_track_run(rule_id, date, "stopped", due_at, &state, now)
+            .await?
+        {
+            return Ok(true);
+        }
+        let updated = sqlx::query(
+            "UPDATE rule_runs SET status = 'stopped', updated_at = ?
+             WHERE rule_id = ? AND date = ? AND status IN ('searching', 'tracking')",
+        )
+        .bind(now)
+        .bind(rule_id)
+        .bind(date)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(updated > 0)
+    }
+
+    /// Records the final delay of a run (decision AY); a second write replaces the first.
+    pub async fn upsert_observed_delay(
+        &self,
+        delay: &ObservedDelay,
+    ) -> Result<(), SchedulerStoreError> {
+        sqlx::query(
+            "INSERT INTO observed_delays
+                 (service_date, trip_id, stop_id, line, scheduled, final_expected,
+                  delay_seconds, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (service_date, trip_id, stop_id) DO UPDATE SET
+                 line = excluded.line, scheduled = excluded.scheduled,
+                 final_expected = excluded.final_expected,
+                 delay_seconds = excluded.delay_seconds, source = excluded.source",
+        )
+        .bind(delay.service_date)
+        .bind(&delay.trip_id)
+        .bind(&delay.stop_id)
+        .bind(&delay.line)
+        .bind(delay.scheduled)
+        .bind(delay.final_expected)
+        .bind(delay.delay_seconds)
+        .bind(&delay.source)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Deletes one-off rules whose date is before `before` (their runs go with them; the log
+    /// keeps their notifications). Returns how many.
+    pub async fn purge_one_off_rules(&self, before: NaiveDate) -> Result<u64, SchedulerStoreError> {
+        Ok(
+            sqlx::query("DELETE FROM rules WHERE date IS NOT NULL AND date < ?")
+                .bind(before)
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+}
+
+fn state_json(state: &TrackState) -> String {
+    // A plain struct of strings, numbers and dates cannot fail to serialize.
+    serde_json::to_string(state).unwrap_or_else(|_| "{}".to_owned())
+}
+
+/// A tracking run with its typed state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackRun {
+    pub rule_id: i64,
+    pub date: NaiveDate,
+    /// `searching`, `tracking`, `done`, `cancelled`, `not_found`, `stopped`, `skipped`,
+    /// `failed`.
+    pub status: String,
+    pub due_at: DateTime<Utc>,
+    pub state: TrackState,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl TrackRun {
+    fn from_run(run: RuleRun) -> Self {
+        let state = run
+            .state
+            .as_deref()
+            .and_then(|json| {
+                serde_json::from_str(json)
+                    .inspect_err(|err| {
+                        tracing::warn!("rule {}: unreadable tracking state: {err}", run.rule_id);
+                    })
+                    .ok()
+            })
+            .unwrap_or_default();
+        Self {
+            rule_id: run.rule_id,
+            date: run.date,
+            status: run.status,
+            due_at: run.due_at,
+            state,
+            updated_at: run.updated_at,
+        }
+    }
+}
+
+/// The final delay of a tracked run.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct ObservedDelay {
+    pub service_date: NaiveDate,
+    pub trip_id: String,
+    pub stop_id: String,
+    pub line: String,
+    pub scheduled: DateTime<Utc>,
+    pub final_expected: DateTime<Utc>,
+    pub delay_seconds: i64,
+    pub source: String,
 }
 
 #[cfg(test)]
@@ -546,7 +786,7 @@ mod tests {
 
     #[tokio::test]
     async fn alerts_baseline_then_new_ones() {
-        let (store, _, _) = setup().await;
+        let (store, rules, rule) = setup().await;
         assert!(store.alerts_is_empty().await.unwrap());
         store
             .insert_alerts_baseline(&ids(&["a", "b"]), at(10, 0))
@@ -556,7 +796,7 @@ mod tests {
         // Baseline alerts are handled: never new, even for a rule created before them.
         assert!(
             store
-                .unnotified_alert_ids(at(1, 0))
+                .unnotified_alert_ids(rule, at(1, 0))
                 .await
                 .unwrap()
                 .is_empty()
@@ -572,25 +812,161 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            store.unnotified_alert_ids(at(1, 0)).await.unwrap(),
+            store.unnotified_alert_ids(rule, at(1, 0)).await.unwrap(),
             ids(&["c", "d"])
         );
         // Only alerts first seen after the rule was created.
         assert_eq!(
-            store.unnotified_alert_ids(at(11, 0)).await.unwrap(),
+            store.unnotified_alert_ids(rule, at(11, 0)).await.unwrap(),
             ids(&["d"])
         );
 
         store
-            .mark_alerts_notified(&ids(&["c", "missing"]), at(12, 6))
+            .mark_alerts_notified(rule, &ids(&["c", "missing"]), at(12, 6))
             .await
             .unwrap();
         assert_eq!(
-            store.unnotified_alert_ids(at(1, 0)).await.unwrap(),
+            store.unnotified_alert_ids(rule, at(1, 0)).await.unwrap(),
             ids(&["d"])
         );
         // Marking again does not move the date; empty lists are fine.
-        store.mark_alerts_notified(&[], at(12, 7)).await.unwrap();
+        store
+            .mark_alerts_notified(rule, &[], at(12, 7))
+            .await
+            .unwrap();
+
+        // Another rule has its own list: "c" is still new for it.
+        let other = rules
+            .create(
+                NewRule {
+                    name: "Other".into(),
+                    enabled: true,
+                    stop_id: "gtt:39".into(),
+                    days: vec![],
+                    date: None,
+                    skip_holidays: true,
+                    paused_until: None,
+                    config: RuleConfig::Summary(SummaryConfig {
+                        time: NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+                        lines: vec![],
+                        window_minutes: 30,
+                        max_departures: 6,
+                    }),
+                },
+                at(1, 0),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .unnotified_alert_ids(other.id, at(1, 0))
+                .await
+                .unwrap(),
+            ids(&["c", "d"])
+        );
         store.upsert_seen_alerts(&[], at(12, 7)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn track_runs_are_listed_updated_and_stopped() {
+        let (store, _, rule) = setup().await;
+        let state = TrackState {
+            trip_id: Some("gtt:1".into()),
+            ..TrackState::default()
+        };
+        assert!(
+            store
+                .insert_track_run(rule, day(12), "tracking", at(12, 7), &state, at(12, 6))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .insert_track_run(rule, day(12), "searching", at(12, 7), &state, at(12, 6))
+                .await
+                .unwrap()
+        );
+        store
+            .insert_track_run(rule, day(10), "tracking", at(10, 7), &state, at(10, 6))
+            .await
+            .unwrap();
+        store
+            .insert_track_run(rule, day(11), "done", at(11, 7), &state, at(11, 6))
+            .await
+            .unwrap();
+        let active = store.active_track_runs(day(11), day(12)).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].date, day(12));
+        assert_eq!(active[0].state, state);
+
+        let newer = TrackState {
+            expected: Some(at(12, 7)),
+            ..state.clone()
+        };
+        assert!(
+            store
+                .update_track_run(rule, day(12), "tracking", &newer, at(12, 6))
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .stop_track_run(rule, day(12), at(12, 7), at(12, 6))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .update_track_run(rule, day(12), "tracking", &state, at(12, 6))
+                .await
+                .unwrap()
+        );
+        // A done day stays done; a missing day is inserted as stopped.
+        assert!(
+            !store
+                .stop_track_run(rule, day(11), at(11, 7), at(12, 6))
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .stop_track_run(rule, day(13), at(13, 7), at(12, 6))
+                .await
+                .unwrap()
+        );
+        let run = store.get_track_run(rule, day(13)).await.unwrap().unwrap();
+        assert_eq!(run.status, "stopped");
+        assert!(
+            store
+                .active_track_runs(day(1), day(30))
+                .await
+                .unwrap()
+                .len()
+                == 1
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_delay_is_upserted() {
+        let (store, _, _) = setup().await;
+        let mut delay = ObservedDelay {
+            service_date: day(12),
+            trip_id: "gtt:1".into(),
+            stop_id: "gtt:39".into(),
+            line: "67".into(),
+            scheduled: at(12, 7),
+            final_expected: at(12, 7),
+            delay_seconds: 0,
+            source: "otp".into(),
+        };
+        store.upsert_observed_delay(&delay).await.unwrap();
+        delay.delay_seconds = 180;
+        delay.source = "gtt".into();
+        store.upsert_observed_delay(&delay).await.unwrap();
+        let rows: Vec<ObservedDelay> = sqlx::query_as("SELECT * FROM observed_delays")
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, vec![delay]);
     }
 }

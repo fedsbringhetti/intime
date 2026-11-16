@@ -29,6 +29,8 @@ pub struct TripUpdates {
 struct Run {
     canceled: bool,
     updated_at: Option<DateTime<Utc>>,
+    /// The label of the vehicle assigned (`9648`).
+    vehicle: Option<String>,
     /// Sorted by stop sequence.
     stops: Vec<StopUpdate>,
 }
@@ -44,6 +46,27 @@ struct StopUpdate {
 enum Event {
     Time(DateTime<Utc>),
     Delay(TimeDelta),
+}
+
+/// The vehicle assigned to a run, from its trip update (decision AW).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunVehicle {
+    pub label: String,
+    /// The first stop sequence of the update: where the vehicle is heading.
+    pub next_sequence: Option<u32>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl RunVehicle {
+    /// Stops from the vehicle to the stop at `sequence`; `None` when the update is older than
+    /// [`MAX_AGE`] or the stop is already behind it. Before a run starts the vehicle is at
+    /// its first stop: the number then means "not left yet", not "near".
+    pub fn stops_away(&self, sequence: u32, now: DateTime<Utc>) -> Option<u32> {
+        if self.updated_at.is_some_and(|at| now - at > MAX_AGE) {
+            return None;
+        }
+        sequence.checked_sub(self.next_sequence?)
+    }
 }
 
 /// What GTT says about one departure.
@@ -115,6 +138,10 @@ impl TripUpdates {
                     canceled: update.trip.schedule_relationship
                         == Some(TripRelationship::Canceled as i32),
                     updated_at,
+                    vehicle: update
+                        .vehicle
+                        .and_then(|vehicle| vehicle.label)
+                        .filter(|label| !label.is_empty()),
                     stops,
                 },
             );
@@ -132,6 +159,16 @@ impl TripUpdates {
 
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty()
+    }
+
+    /// The vehicle of a run (`trip_id` without `gtt:`), when its update names one.
+    pub fn vehicle(&self, trip_id: &str, date: NaiveDate) -> Option<RunVehicle> {
+        let run = self.runs.get(&(trip_id.to_owned(), date))?;
+        Some(RunVehicle {
+            label: run.vehicle.clone()?,
+            next_sequence: run.stops.first().map(|stop| stop.sequence),
+            updated_at: run.updated_at,
+        })
     }
 
     /// GTT's prediction for the stop at `sequence` of a run scheduled there at `scheduled`.
@@ -344,6 +381,32 @@ mod tests {
             vec![stop(10, None, Some(60)), skipped],
         )]);
         assert_eq!(predict(&updates, "1U", 12), Prediction::Expected(at(660)));
+    }
+
+    #[test]
+    fn vehicle_and_stops_away() {
+        let mut entity = run(
+            "1U",
+            30,
+            false,
+            vec![stop(5, None, Some(0)), stop(9, None, Some(0))],
+        );
+        entity.trip_update.as_mut().unwrap().vehicle = Some(crate::gtt::proto::VehicleDescriptor {
+            id: Some("9648U".to_owned()),
+            label: Some("9648".to_owned()),
+            ..Default::default()
+        });
+        let updates = feed(vec![entity, run("2U", 30, false, vec![])]);
+        let vehicle = updates.vehicle("1U", date()).unwrap();
+        assert_eq!(vehicle.label, "9648");
+        assert_eq!(vehicle.next_sequence, Some(5));
+        assert_eq!(vehicle.stops_away(12, at(0)), Some(7));
+        assert_eq!(vehicle.stops_away(5, at(0)), Some(0));
+        assert_eq!(vehicle.stops_away(4, at(0)), None);
+        // An update older than three minutes says nothing about where the vehicle is.
+        assert_eq!(vehicle.stops_away(12, at(151)), None);
+        assert!(updates.vehicle("2U", date()).is_none());
+        assert!(updates.vehicle("3U", date()).is_none());
     }
 
     #[test]

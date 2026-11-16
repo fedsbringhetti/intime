@@ -48,11 +48,11 @@ const DEFAULT_WATCH_FROM_MINUTES: u32 = 30;
 /// A run still missing 10 minutes before its time is "not found", so tracking starts earlier.
 const MIN_WATCH_FROM_MINUTES: u32 = 10;
 const MAX_WATCH_FROM_MINUTES: u32 = 120;
-const DEFAULT_ALERT_BEFORE_MINUTES: [u32; 2] = [10, 5];
+pub(super) const DEFAULT_ALERT_BEFORE_MINUTES: [u32; 2] = [10, 5];
 const MAX_ALERT_BEFORE_MINUTES: u32 = 60;
 const MAX_REMINDERS: usize = 4;
-const DEFAULT_DELAY_ALERT_MINUTES: u32 = 3;
-const MAX_DELAY_ALERT_MINUTES: u32 = 30;
+pub(super) const DEFAULT_DELAY_ALERT_MINUTES: u32 = 3;
+pub(super) const MAX_DELAY_ALERT_MINUTES: u32 = 30;
 
 /// How far ahead a pause may last.
 const MAX_PAUSE_DAYS: i64 = 365;
@@ -183,7 +183,14 @@ fn some_weekdays<'de, D: Deserializer<'de>>(
 pub async fn list(State(state): State<AppState>) -> Result<Json<RulesResponse>, ApiError> {
     let index_ready = state.stops.last_sync().await?.is_some();
     let mut rules = Vec::new();
-    for rule in state.rules.list().await? {
+    // One-off trackings are shown by `/api/trackings` only.
+    for rule in state
+        .rules
+        .list()
+        .await?
+        .into_iter()
+        .filter(|rule| rule.date.is_none())
+    {
         rules.push(view(&state, rule, index_ready).await?);
     }
     Ok(Json(RulesResponse { rules }))
@@ -276,6 +283,7 @@ pub async fn delete(
     id: Result<Path<i64>, PathRejection>,
 ) -> Result<StatusCode, ApiError> {
     let Path(id) = id.map_err(|err| ApiError::InvalidRequest(err.body_text()))?;
+    find(&state, id).await?;
     if state.rules.delete(id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -371,7 +379,13 @@ pub async fn runs(
 }
 
 async fn find(state: &AppState, id: i64) -> Result<Rule, ApiError> {
-    state.rules.get(id).await?.ok_or(ApiError::RuleNotFound(id))
+    // One-off trackings are not rules for the API: they answer 404 here.
+    state
+        .rules
+        .get(id)
+        .await?
+        .filter(|rule| rule.date.is_none())
+        .ok_or(ApiError::RuleNotFound(id))
 }
 
 async fn save(state: &AppState, rule: Rule) -> Result<Json<RuleView>, ApiError> {
@@ -412,7 +426,7 @@ async fn view(state: &AppState, rule: Rule, index_ready: bool) -> Result<RuleVie
 }
 
 /// The stop of a rule, which the index must know: a typo would make a rule that never works.
-async fn find_stop(state: &AppState, input: &str) -> Result<StopInfo, ApiError> {
+pub(super) async fn find_stop(state: &AppState, input: &str) -> Result<StopInfo, ApiError> {
     let stop_id = resolve_stop_id(input)
         .ok_or_else(|| ApiError::InvalidRequest(format!("Invalid stop {input:?}")))?;
     if state.stops.last_sync().await?.is_none() {
@@ -526,13 +540,14 @@ fn parse_config(kind: Kind, config: serde_json::Value) -> Result<RuleConfig, Api
                     1,
                     MAX_DELAY_ALERT_MINUTES,
                 )?,
+                trip_id: None,
             }))
         }
     }
 }
 
 /// Longest first, each once; none is allowed (only delay and cancellation alerts).
-fn clean_reminders(mut minutes: Vec<u32>) -> Result<Vec<u32>, ApiError> {
+pub(super) fn clean_reminders(mut minutes: Vec<u32>) -> Result<Vec<u32>, ApiError> {
     for minute in &minutes {
         check_range(
             "config.alert_before_minutes",

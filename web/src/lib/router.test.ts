@@ -4,6 +4,20 @@ import { isInternalClick, matchRoute, pathOf, tabOf, type LinkClick, type Route 
 const prod = { dev: false }
 const dev = { dev: true }
 
+describe('tracking route', () => {
+  it('reads and writes /corsa/{id}', () => {
+    expect(matchRoute('/corsa/12', '', prod)).toEqual({ name: 'tracking', id: '12' })
+    expect(matchRoute('/corsa/12/', '', prod)).toEqual({ name: 'tracking', id: '12' })
+    expect(matchRoute('/corsa/abc', '', prod)).toEqual({ name: 'not-found' })
+    expect(matchRoute('/corsa', '', prod)).toEqual({ name: 'not-found' })
+    expect(pathOf({ name: 'tracking', id: '12' })).toBe('/corsa/12')
+  })
+
+  it('keeps the tab it was opened from', () => {
+    expect(tabOf({ name: 'tracking', id: '1' }, 'notifications')).toBe('notifications')
+  })
+})
+
 describe('matchRoute', () => {
   it('reads the main screens', () => {
     expect(matchRoute('/', '', prod)).toEqual({ name: 'home' })

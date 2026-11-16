@@ -196,4 +196,4 @@ Done on Thursday 5 November 2026 at 11:12, on a copy of the data folder: migrati
 
 ## Later changes
 
-None yet.
+- [Chapter 19](19-tracking.md) (step 6): `TrackConfig` gets `trip_id` (one-offs only); `/api/rules` hides one-off trackings and answers `404` for them; trackings are followed by the scheduler.

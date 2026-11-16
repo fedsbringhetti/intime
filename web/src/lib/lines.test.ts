@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeDelay, vehicleType } from './lines'
+import { describeDelay, describeDelayLong, vehicleType } from './lines'
 
 describe('vehicleType', () => {
   it('groups the upstream modes', () => {
@@ -34,5 +34,13 @@ describe('describeDelay', () => {
   it('uses the minus sign when early', () => {
     expect(describeDelay(-60)).toEqual({ label: '−1', level: 'early' })
     expect(describeDelay(-170)).toEqual({ label: '−3', level: 'early' })
+  })
+})
+
+describe('describeDelayLong', () => {
+  it('adds the words next to the minutes', () => {
+    expect(describeDelayLong(0).label).toBe('in orario')
+    expect(describeDelayLong(-180).label).toBe('−3 min in anticipo')
+    expect(describeDelayLong(540).label).toBe('+9 min in ritardo')
   })
 })

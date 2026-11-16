@@ -1,6 +1,6 @@
 # 18. Scheduler and summaries
 
-> Phase 3, step 5 · PR (to be opened) · plan [phase-3-step-5.md](../plan/steps/phase-3-step-5.md)
+> Phase 3, step 5 · PR [#28](https://github.com/fedsbringhetti/intime/pull/28) · plan [phase-3-step-5.md](../plan/steps/phase-3-step-5.md)
 
 ## Goal
 
@@ -105,11 +105,11 @@ Checked by hand on 2026-11-12 in Chrome on the Mac: a summary two minutes ahead 
 - **Never "today + time"**: DST days are tested because `local_time` does the conversion; the scheduler only compares instants.
 - **Do not hold a guard across the notifier**: neither the `Alerts` lock nor a transaction lives over an `.await` on a send.
 - **Known limitations**:
-  - `notified_alerts` is global, not per rule: two rules on one stop share an alert, and the first to run gets it; the other never does.
+  - ~~`notified_alerts` is global, not per rule~~: fixed in step 6 ([19](19-tracking.md)).
   - The baseline needs a non-empty first read. While the table is empty each read is stored as the baseline, so if the first read has no active alerts, the first ones that appear are swallowed as baseline instead of being sent.
   - Only alerts active at the time of a read are recorded. An alert whose period starts later is "first seen" then, which is right, but one that was active and ended between two reads is never seen at all.
-  - These three are in [../backlog.md](../backlog.md).
+  - The other two are in [../backlog.md](../backlog.md).
 
 ## Later changes
 
-None yet.
+- [Chapter 19](19-tracking.md) (step 6): the tick also evaluates tracking rules (`track_occurrence`), and the alerts already handled are kept per rule in `rule_notified_alerts` (the baseline in `notified_alerts` stays global).

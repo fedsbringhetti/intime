@@ -9,8 +9,13 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::{
-    departures::DeparturesError, favorites::FavoritesError, notify::NotifyError, push::PushError,
-    rules::RulesError, scheduler::store::SchedulerStoreError, stops::IndexError,
+    departures::DeparturesError,
+    favorites::FavoritesError,
+    notify::NotifyError,
+    push::PushError,
+    rules::RulesError,
+    scheduler::{store::SchedulerStoreError, tracking::TrackError},
+    stops::IndexError,
     upstream::UpstreamError,
 };
 
@@ -23,6 +28,11 @@ pub enum ApiError {
     StopNotFound(String),
     FavoriteNotFound(i64),
     RuleNotFound(i64),
+    TrackingNotFound(i64),
+    /// The departure to track is not in the stop's list.
+    TripNotFound(String),
+    /// The departure is cancelled or already gone.
+    TripNotTrackable(String),
     /// The action exists only for summary rules.
     NotSummary(i64),
     UpstreamTimeout,
@@ -65,6 +75,21 @@ impl ApiError {
                 StatusCode::NOT_FOUND,
                 "rule_not_found",
                 format!("Rule {id} not found"),
+            ),
+            Self::TrackingNotFound(id) => (
+                StatusCode::NOT_FOUND,
+                "tracking_not_found",
+                format!("Tracking {id} not found"),
+            ),
+            Self::TripNotFound(trip) => (
+                StatusCode::NOT_FOUND,
+                "trip_not_found",
+                format!("Trip {trip} not found at this stop"),
+            ),
+            Self::TripNotTrackable(message) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "trip_not_trackable",
+                message,
             ),
             Self::NotSummary(id) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -172,5 +197,14 @@ impl From<SchedulerStoreError> for ApiError {
     fn from(err: SchedulerStoreError) -> Self {
         tracing::error!("scheduler: {err}");
         Self::Internal
+    }
+}
+
+impl From<TrackError> for ApiError {
+    fn from(err: TrackError) -> Self {
+        match err {
+            TrackError::Rules(err) => err.into(),
+            TrackError::Store(err) => err.into(),
+        }
     }
 }
