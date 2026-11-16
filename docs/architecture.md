@@ -112,13 +112,14 @@ Only `stops.txt` of GTT's GTFS static archive is used (Phase 3, decision Q): it 
 
 ### Rules
 
-A rule is a **summary** (at a time, the next departures from a stop) or the **tracking** of a run (line and scheduled time at a stop), on some days of the week (Phase 3, section 5). Step 3 stores them and computes their calendar; the scheduler (below) acts on summaries; trackings wait for step 6.
+A rule is a **summary** (at a time, the next departures from a stop) or the **tracking** of a run (line and scheduled time at a stop), on some days of the week (Phase 3, section 5). Step 3 stores them and computes their calendar; the scheduler (below) acts on summaries and, from step 6, on trackings.
 
 - **Storage** (`src/rules/mod.rs`): one row per rule in `rules`. The fields of each kind are a JSON `config`, read into typed structs (`SummaryConfig`, `TrackConfig`) and checked on the way in; the API returns them as `kind` plus `config`, as stored (decision AG). Missing numbers get their defaults when a rule is created, and the defaults are stored.
 - **Checks** (`src/api/rules.rs`): the stop must be in the index and every line must serve it; the stored name of a line is the index's.
 - **Calendar** (`src/rules/schedule.rs`): `Schedule::on(date)` says what a rule does on a day: due at a time, not one of its days, a holiday it skips, paused, disabled. `Schedule::next(now)` is the next occurrence. Days are calendar days in Europe/Rome (decision AI); a local time skipped when daylight saving starts moves to the next valid minute, and one repeated when it ends is the first one.
 - **Holidays** (`src/rules/holidays.rs`): Italian national holidays (fixed dates, Easter and Easter Monday computed, 4 October from 2026) and 24 June, by their Italian names (decision K).
 - **Pause**: `paused_until` is the last day skipped, included; "salta oggi" pauses until today. A pause without a date turns the rule off (decision AH).
+- **One-off trackings** (step 6) are `track` rules with a `date` and a `trip_id` in their config, created by `POST /api/trackings`. `/api/rules` hides them and answers `404` for their ids; they are shown by `/api/trackings` only.
 - The API adds `today` and `next` to every rule, computed at each request from the clock (decision AJ); `today.run` is the status of today's row in `rule_runs`, or `null`.
 
 ### Notifications
@@ -137,15 +138,30 @@ Web Push delivers a notification to the phone through the push service of its br
 
 A background task (`src/scheduler/mod.rs`) wakes up every `SCHEDULER_TICK_SECS` (15) and calls `Scheduler::tick(now)`; the time comes from the `Clock`, so tests call `tick` with chosen times (Phase 3, section 6 and [plan/steps/phase-3-step-5.md](plan/steps/phase-3-step-5.md)).
 
-- **Occurrences**: for each summary rule, `Schedule::on` gives the occurrence of today and of yesterday (a 23:58 summary seen at 00:01 still counts). Tracking rules are ignored until step 6.
+- **Occurrences**: for each summary rule, `Schedule::on` gives the occurrence of today and of yesterday (a 23:58 summary seen at 00:01 still counts). Tracking rules are handled by the same tick (next section); a one-off for just after midnight is also looked at the evening before (tomorrow's date).
 - **Once per rule and day**: the row `(rule_id, date)` of `rule_runs` (calendar day in Europe/Rome) is inserted as `running` before sending, then set to `sent` or `failed`. After a crash a row left `running` becomes `failed` at startup and is never sent again: a missing summary is better than a duplicate. Changing the time after the rule ran does not send it again that day.
 - **Missed runs** (decision M): an occurrence found due is sent if it is at most `MISSED_RUN_GRACE_MINUTES` (5) old; otherwise it is recorded as `skipped`, also for a rule created or moved to a time already past.
 - **Upstream failure**: stale departures (up to 2 minutes) are used. On an error the run is `pending` and retried at each tick until the grace ends; then it is `failed` and one notification, "Riepilogo non disponibile", is sent. A `pending` run found after the grace (even if the upstream is back, or after a restart) never sends the summary: it becomes `failed`, with the notice only if it is at most twice the grace late, silently beyond that.
 - **The message** (`summary_notification`, shared with `POST /api/rules/{id}/test`): title `🚌 <rule> — <stop> (<code>)`, stop and headsign names title-cased like the web app (`PORTA NUOVA` → `Porta Nuova`, `src/display_name.rs`), one line per departure (`4 → Falchera 07:43 (+2) tra 3'`, `(orario)` when only scheduled, `cancellata`), or "Nessuna partenza nei prossimi N minuti."; `tag: rule-<id>` so today's replaces yesterday's; `url` the stop page. Lines are cut so the payload stays under 3000 bytes.
 - **New alerts**: at each tick, when the alerts were read again, the ids of the active alerts are stored in `notified_alerts`. The first read is a baseline: stored as handled, never sent. Right after a rule's summary, the alerts of its stop (and of its lines, or naming no line) first seen after the rule was created and not yet handled are sent: one notification each up to two, a single list above that; each is marked handled right after its own send, so a failure midway never resends the earlier ones. They never go out at night: they wait for an occurrence.
-- **Upkeep**: at the first tick of each day, `notifications` and `rule_runs` older than 90 days are deleted.
+- **Alerts per rule** (step 6, decision AZ): the baseline in `notified_alerts` stays global, but which alerts a rule has sent is in `rule_notified_alerts (rule_id, alert_id)`. An alert is new for a rule when it was first seen after the rule was created, is not baseline and the rule has no row for it, so a summary and a tracking on the same stop both get it. A recurring tracking rule sends its stop's new alerts for its line when its run starts; one-offs do not (the stop page shows the banner).
+- **Upkeep**: at the first tick of each day, `notifications` and `rule_runs` older than 90 days are deleted, and one-off tracking rules whose date is before yesterday (their runs go with them; the log keeps its rows with `rule_id` null).
 
 Known limits are listed in [development/18-scheduler.md](development/18-scheduler.md#pitfalls).
+
+### Tracking
+
+Following one run (Phase 3, step 6, [plan](plan/steps/phase-3-step-6.md), [chapter](development/19-tracking.md)). A tracking is a `track` rule: **recurring** (line, scheduled time, tolerance; created with `/api/rules`) or **one-off** (`POST /api/trackings` from a departure, with its `trip_id`, a `date` and `days` empty). Its day's state is a row of `rule_runs` whose `state` is a typed `TrackState` (`src/scheduler/tracking.rs`).
+
+- **Evaluation**: at every scheduler tick (15 s, no separate poll), for yesterday, today and tomorrow (a rule at 00:10 with a 30-minute watch starts the evening before; the run's row date is the occurrence's calendar day). Departures come from `DeparturesService` (20-second cache, shared with summaries and the web app), searched directly because `select` drops departures already past.
+- **Statuses** of a run: `searching`, `tracking`, `done`, `cancelled`, `not_found`, `stopped` ("Smetti di seguire"), `skipped`, `failed`. The API adds `waiting` (before `at − watch_from`, no row). `recover` at startup fails only `running` rows, so `searching` and `tracking` survive a restart.
+- **Start**: a recurring rule inserts `searching` at `at − watch_from` and looks for the same line (case-insensitive) within `tolerance_minutes` of the scheduled time, closest first, earlier on ties; found, it stores `trip_id`, service date and stop sequence and becomes `tracking`. An occurrence more than 10 minutes late, or before the rule existed, is `skipped`. A one-off starts `tracking` when created, with the run already seeded.
+- **`step`**: a pure function `step(state, input, departures, now)` returning the new state, the status and the notices to send; tested without a database. Reminders: the smallest threshold not done with `remaining ≤ T` is marked done together with every larger one, and sent only if `remaining > T − 2 min`, so a late start or a restart never sends a stale reminder. Delay: when the source is not `scheduled` and the delay reaches `delay_alert_minutes`, once, then again at every 3 more minutes. Cancelled (GTT or OpenTripPlanner): one alert with the next departure of the line, then `cancelled`. Not found (recurring, still `searching` 10 minutes before): one alert with the two closest departures, only if the time has not passed, then `not_found`. Done: `expected` reached, or the run vanished from the list within 2 minutes of it. A one-off missing from the list keeps its last state and becomes `failed`, silently, 60 minutes after `expected`.
+- **At most once**: the state, with the new events, is saved before the notices are sent (a missing notice beats a duplicate), by an update that applies only to `searching` or `tracking` rows, so a run stopped or deleted meanwhile is never overwritten. Notices use `tag: track-<rule_id>`, `url: /corsa/<rule_id>` and kinds `reminder`, `delay`, `cancelled`, `not_found`; they are logged like summaries.
+- **Vehicle**: `TripUpdates::vehicle` gives the label of the vehicle in the run's trip update and its next stop sequence; stops away is the tracked sequence minus that one, unknown when the update is older than 3 minutes (decision AW). `vehicle_position.aspx` is not read: its vehicles carry no trip. Without GTT data the vehicle is always `null`.
+- **Delay history**: when a run ends `done`, its final delay is upserted into `observed_delays` (`service_date`, `trip_id`, `stop_id`; `cancelled` runs are not written). Nothing reads it yet (step 9).
+- **API** (`src/api/trackings.rs`): `GET`/`POST /api/trackings`, `GET`/`DELETE /api/trackings/{id}`. Deleting a one-off deletes the rule; deleting a recurring one stops its active run (yesterday's, today's or tomorrow's; today's if none is active) only (decision BA). A one-off is reused only for the same stop, trip and date.
+- **Web**: a departure row opens `TrackSheet` (reminders and delay threshold) which posts the tracking and goes to `/corsa/{id}` (`screens/Tracking.svelte`, polling every 15 s); Notifiche lists the trackings in progress.
 
 ### Stop index
 
@@ -171,7 +187,7 @@ Stored in SQLite with a 0-based `position` kept contiguous: inserts go at the en
 
 ### Data
 
-One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in WAL mode). Migrations in `migrations/` are compiled into the binary and applied at startup. Tables: `stops`, `stops_fts`, `sync_state` (last stop sync and last check of GTT's static data, with its version), `favorites`, `gtt_stops` (GTT's stop ids and ours), `rules` (kind-specific fields as JSON in `config`), `push_subscriptions` (one row per device that enabled notifications: endpoint, the browser's keys, label), `rule_runs` (one row per summary rule and day: status, due time), `notifications` (log of what was sent), `notified_alerts` (alert ids seen, and whether they were handled).
+One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in WAL mode). Migrations in `migrations/` are compiled into the binary and applied at startup. Tables: `stops`, `stops_fts`, `sync_state` (last stop sync and last check of GTT's static data, with its version), `favorites`, `gtt_stops` (GTT's stop ids and ours), `rules` (kind-specific fields as JSON in `config`), `push_subscriptions` (one row per device that enabled notifications: endpoint, the browser's keys, label), `rule_runs` (one row per rule and day: status, due time, and for trackings the state as JSON), `notifications` (log of what was sent), `notified_alerts` (alert ids seen, and whether they were handled), `rule_notified_alerts` (alerts sent, per rule), `observed_delays` (final delay of each tracked run).
 
 ## Code map
 
@@ -186,7 +202,7 @@ One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in W
 | `src/upstream/health.rs` | outcome of recent upstream calls |
 | `src/departures.rs` | departures: conversion, sorting, filtering, cache, stale fallback, merge with GTT's predictions |
 | `src/gtt/mod.rs` | GTT's real-time client: reading, cache, retry, pause after a failure, health |
-| `src/gtt/trip_updates.rs` | trip updates indexed by run; the prediction for one stop of a run |
+| `src/gtt/trip_updates.rs` | trip updates indexed by run; the prediction for one stop of a run; the run's vehicle and stops away |
 | `src/gtt/comparison.rs` | today's comparison between GTT and OpenTripPlanner |
 | `src/gtt/alerts.rs` | GTT's alerts: reading in the background, linking to stops and lines, active periods |
 | `src/gtt/static_data.rs` | GTT's static data: nightly conditional download, `stops.txt` → `gtt_stops` |
@@ -205,7 +221,8 @@ One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in W
 | `src/notify/webpush.rs` | `WebPushNotifier`: encryption, sending, removing expired subscriptions |
 | `src/notify/log.rs` | `LogNotifier`, used without a VAPID key |
 | `src/scheduler/mod.rs` | the tick, occurrences, missed runs, summary and alert messages, `spawn` |
-| `src/scheduler/store.rs` | `SchedulerStore`: `rule_runs`, the notifications log, `notified_alerts` |
+| `src/scheduler/store.rs` | `SchedulerStore`: `rule_runs` (and track runs), the notifications log, `notified_alerts`, `rule_notified_alerts`, `observed_delays` |
+| `src/scheduler/tracking.rs` | tracking: `TrackState`, the pure `step`, notices, one-off creation, the live `view` |
 | `src/push.rs` | push subscriptions: storage, checks of a browser's keys, which push services are allowed |
 | `src/api/mod.rs` | router, shared `AppState`, token layer |
 | `src/api/stops.rs` | search, nearby, details and departures handlers |
@@ -214,6 +231,7 @@ One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in W
 | `src/api/push.rs` | VAPID public key, subscribe and unsubscribe |
 | `src/api/notifications.rs` | `/api/notifications/test`, `/api/notifications` |
 | `src/api/rules.rs` | rules handlers: checks, defaults, pause and resume, today and next, `test` and `runs` |
+| `src/api/trackings.rs` | `/api/trackings`: one-off creation, list, live detail, stop |
 | `src/api/status.rs`, `health.rs` | `/api/status`, `/health` |
 | `src/api/auth.rs` | `API_TOKEN` middleware |
 | `src/api/error.rs` | error codes and JSON error responses |
@@ -224,6 +242,7 @@ One SQLite file in `DATA_DIR` (`gtt.db`, plus `gtt.db-wal` and `gtt.db-shm` in W
 | `web/src/lib/api.ts` | API types and calls, errors and their Italian messages |
 | `web/src/lib/format.ts`, `poll.ts`, `departures.ts` | times, names and matches; reloading while visible; line filters |
 | `web/src/lib/favorites.ts` | the favorite behind the star on a stop |
+| `web/src/lib/tracking.ts`, `components/TrackSheet.svelte`, `screens/Tracking.svelte` | following a run: sheet choices and request, countdown; the live page `/corsa/{id}` |
 | `web/src/lib/push.ts`, `pushPayload.ts`, `screens/Notifications.svelte` | the Notifiche screen: state, permission and subscription; reading a push's payload (shared with the service worker) |
 | `web/src/lib/location.ts` | the phone's position, asked to the browser, with Italian errors |
 | `web/src/sw.ts`, `web/src/lib/update.svelte.ts` | service worker; new versions and "Aggiorna" |
@@ -240,8 +259,9 @@ Reading order for a first look: `main.rs` → `api/mod.rs` → `api/stops.rs` �
 ## Known limitations
 
 - **Unofficial upstream**: it can change or disappear. `/api/status` and the logs show failures; a schema change shows up as a GraphQL validation error.
-- **No vehicle positions and no service alerts** in the upstream API. Both come from GTT's open data in Phase 3 ([plan/phase-3.md](plan/phase-3.md)); alerts are done (step 2), positions come with trip tracking.
+- **No vehicle positions and no service alerts** in the upstream API. Both come from GTT's open data in Phase 3 ([plan/phase-3.md](plan/phase-3.md)); alerts are done (step 2). Positions are not read at all: the vehicle of a tracked run comes from its trip update (step 6), and its coordinates, which no feature uses yet, would need `vehicle_position.aspx`, whose vehicles carry no trip.
 - **GTT's alerts** name some temporary stops missing from GTT's static data (52 on 2026-11-04): an alert listing only such stops is shown by `/api/alerts` but at no stop. An alert naming neither stops nor lines (1 on 2026-11-04) is shown only by `/api/alerts` without filters. Their periods often last a year, so they do not tell when an alert stops mattering.
+- **Tracking** sees only what the stop's departures list holds (2 hours ahead, 20-second cache): a run further away is found when it enters the list, and a reminder cannot be more precise than the feeds (GTT's trip updates change every ~38 s). Stops away from the first stop of a run not yet started means "not left yet", not "near".
 - **GTT's predictions cover urban runs only**, the next few stops of each run, and arrivals only (used as the departure time). Runs not yet started have no prediction. On 2026-11-04 they were mostly earlier than OpenTripPlanner's, by about 3 minutes (median); `/api/status` keeps counting to judge them.
 - **Search**: stops whose name lacks the searched words but whose description has them rank last (e.g. `pza castello` lists towns' "P.ZA CASTELLO" stops before Turin's "CASTELLO").
 - **Stale data** covers only 2 minutes of upstream failure; after that, departures return an error.

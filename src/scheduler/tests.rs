@@ -12,7 +12,7 @@ use crate::{
     departures::{Departure, DeparturesError, Fetched, Source, StopDepartures, StopRef},
     gtt::proto,
     notify::{BoxFuture, Notification, Notifier, NotifyError, SendReport},
-    rules::{NewRule, Rule, RuleConfig, RuleStore, SummaryConfig},
+    rules::{NewRule, Rule, RuleConfig, RuleStore, SummaryConfig, TrackConfig},
     time::TIME_ZONE,
 };
 
@@ -776,4 +776,542 @@ fn departure_lines_are_title_cased() {
         departure_line(&upstream, now),
         "52 → Val Salice, Piazzale Adua 17:22 tra 2'"
     );
+}
+
+// Tracking (step 6)
+
+use tracking::{OneOff, TrackState};
+
+/// Thursday 12 November 2026, 08:05 in Rome is 07:05 UTC.
+const RUN_AT: &str = "2026-11-12T07:05:00Z";
+
+fn track_config(line: &str, time: (u32, u32)) -> TrackConfig {
+    TrackConfig {
+        line: line.to_owned(),
+        scheduled_time: NaiveTime::from_hms_opt(time.0, time.1, 0).unwrap(),
+        tolerance_minutes: 3,
+        watch_from_minutes: 30,
+        alert_before_minutes: vec![10, 5],
+        delay_alert_minutes: 3,
+        trip_id: None,
+    }
+}
+
+impl Harness {
+    async fn track_rule(&self, edit: impl FnOnce(&mut NewRule)) -> Rule {
+        let mut rule = NewRule {
+            name: "67 delle 08:05".to_owned(),
+            enabled: true,
+            stop_id: "gtt:39".to_owned(),
+            days: ALL_DAYS.to_vec(),
+            date: None,
+            skip_holidays: false,
+            paused_until: None,
+            config: RuleConfig::Track(track_config("67", (8, 5))),
+        };
+        edit(&mut rule);
+        self.rules
+            .create(rule, utc("2026-11-01T00:00:00Z"))
+            .await
+            .unwrap()
+    }
+
+    async fn track_run(&self, rule: &Rule, date: NaiveDate) -> Option<store::TrackRun> {
+        self.store.get_track_run(rule.id, date).await.unwrap()
+    }
+
+    fn titles(&self) -> Vec<String> {
+        self.notifier.all().into_iter().map(|n| n.title).collect()
+    }
+}
+
+fn run67(expected: &str, delay_seconds: i64) -> Departure {
+    departure("67", "Centro", expected, delay_seconds, Source::Gtt, false)
+}
+
+#[tokio::test]
+async fn a_recurring_track_rule_starts_at_the_watch_time() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67(RUN_AT, 0)]));
+    let scheduler = h.scheduler();
+    // 30 minutes before 08:05 Rome (07:05 UTC) is 06:35 UTC.
+    scheduler.tick(utc("2026-11-12T06:34:50Z")).await;
+    assert!(h.track_run(&rule, date(2026, 11, 12)).await.is_none());
+    scheduler.tick(utc("2026-11-12T06:35:00Z")).await;
+    let run = h.track_run(&rule, date(2026, 11, 12)).await.unwrap();
+    assert_eq!(run.status, "tracking");
+    assert_eq!(run.state.trip_id.as_deref(), Some("trip-67"));
+    assert_eq!(run.due_at, utc(RUN_AT));
+    // Yesterday's occurrence was long past when the rule was first seen: skipped.
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 11)).await.unwrap().status,
+        "skipped"
+    );
+    assert_eq!(h.notifier.count(), 0);
+}
+
+#[tokio::test]
+async fn a_track_rule_never_runs_on_holidays_or_paused_days() {
+    let h = Harness::new().await;
+    // Friday 25 December 2026 is a holiday; 08:05 CET is 07:05 UTC.
+    let holiday = h.track_rule(|rule| rule.skip_holidays = true).await;
+    let paused = h
+        .track_rule(|rule| rule.paused_until = Some(date(2026, 12, 26)))
+        .await;
+    let off = h.track_rule(|rule| rule.enabled = false).await;
+    h.set_departures(Some(vec![run67("2026-12-25T07:05:00Z", 0)]));
+    h.scheduler().tick(utc("2026-12-25T06:40:00Z")).await;
+    for rule in [&holiday, &paused, &off] {
+        assert!(h.track_run(rule, date(2026, 12, 25)).await.is_none());
+    }
+    // A working day of the unpaused rule does run.
+    h.set_departures(Some(vec![run67("2026-12-28T07:05:00Z", 0)]));
+    h.scheduler().tick(utc("2026-12-28T06:40:00Z")).await;
+    assert!(h.track_run(&holiday, date(2026, 12, 28)).await.is_some());
+    assert!(h.track_run(&paused, date(2026, 12, 28)).await.is_some());
+}
+
+#[tokio::test]
+async fn the_watch_time_follows_the_clock_change() {
+    let h = Harness::new().await;
+    // Sunday 25 October 2026: daylight saving ends, 08:05 is CET (UTC+1).
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67("2026-10-25T07:05:00Z", 0)]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-10-25T06:34:00Z")).await;
+    assert!(h.track_run(&rule, date(2026, 10, 25)).await.is_none());
+    scheduler.tick(utc("2026-10-25T06:36:00Z")).await;
+    assert!(h.track_run(&rule, date(2026, 10, 25)).await.is_some());
+}
+
+#[tokio::test]
+async fn reminders_are_sent_once_across_ticks_and_restarts() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67(RUN_AT, 0)]));
+    h.scheduler().tick(utc("2026-11-12T06:40:00Z")).await;
+    h.scheduler().tick(utc("2026-11-12T06:55:10Z")).await;
+    h.scheduler().tick(utc("2026-11-12T06:55:25Z")).await;
+    assert_eq!(h.titles(), vec!["⏰ Il 67 delle 08:05 passa tra 10 minuti"]);
+    let sent = h.notifier.all();
+    assert_eq!(sent[0].body, "08:05 · Rebaudengo Fossata (39)");
+    assert_eq!(sent[0].url, format!("/corsa/{}", rule.id));
+    assert_eq!(sent[0].tag.as_deref(), Some(&*format!("track-{}", rule.id)));
+    h.scheduler().tick(utc("2026-11-12T07:00:10Z")).await;
+    assert_eq!(h.notifier.count(), 2);
+    let log = h.store.list_notifications(10).await.unwrap();
+    assert!(log.iter().all(|n| n.kind == "reminder"));
+    let run = h.track_run(&rule, date(2026, 11, 12)).await.unwrap();
+    assert_eq!(run.state.reminders_done, vec![10, 5]);
+    assert_eq!(run.state.events.len(), 2);
+}
+
+#[tokio::test]
+async fn a_run_that_leaves_is_done_and_its_delay_is_recorded() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67("2026-11-12T07:07:00Z", 120)]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T07:00:00Z")).await;
+    scheduler.tick(utc("2026-11-12T07:07:05Z")).await;
+    let run = h.track_run(&rule, date(2026, 11, 12)).await.unwrap();
+    assert_eq!(run.status, "done");
+    let row: (String, String, String, i64, String, String) = sqlx::query_as(
+        "SELECT service_date, trip_id, stop_id, delay_seconds, source, final_expected
+         FROM observed_delays",
+    )
+    .fetch_one(&h.pool)
+    .await
+    .unwrap();
+    assert_eq!(row.1, "trip-67");
+    assert_eq!(row.2, "gtt:39");
+    assert_eq!(row.3, 120);
+    assert_eq!(row.4, "gtt");
+    // A done run is never touched again.
+    let count = h.notifier.count();
+    scheduler.tick(utc("2026-11-12T07:08:00Z")).await;
+    assert_eq!(h.notifier.count(), count);
+}
+
+#[tokio::test]
+async fn a_cancelled_run_is_told_and_not_recorded() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    let mut next = departure(
+        "67",
+        "Centro",
+        "2026-11-12T07:17:00Z",
+        0,
+        Source::Otp,
+        false,
+    );
+    next.trip_id = "trip-67-next".to_owned();
+    h.set_departures(Some(vec![
+        departure("67", "Centro", RUN_AT, 0, Source::Gtt, true),
+        next,
+    ]));
+    h.scheduler().tick(utc("2026-11-12T06:50:00Z")).await;
+    h.scheduler().tick(utc("2026-11-12T06:50:15Z")).await;
+    assert_eq!(h.titles(), vec!["⚠️ Il 67 delle 08:05 è cancellato"]);
+    assert_eq!(h.notifier.all()[0].body, "Il prossimo: 08:17");
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "cancelled"
+    );
+    let observed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM observed_delays")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(observed, 0);
+}
+
+#[tokio::test]
+async fn a_run_never_found_is_reported_ten_minutes_before() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![departure(
+        "67",
+        "Centro",
+        "2026-11-12T07:12:00Z",
+        0,
+        Source::Otp,
+        false,
+    )]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T06:40:00Z")).await;
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "searching"
+    );
+    scheduler.tick(utc("2026-11-12T06:55:00Z")).await;
+    scheduler.tick(utc("2026-11-12T06:55:15Z")).await;
+    assert_eq!(h.titles(), vec!["❓ Il 67 delle 08:05 non si trova"]);
+    assert_eq!(h.notifier.all()[0].body, "Più vicine: 08:12");
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "not_found"
+    );
+}
+
+#[tokio::test]
+async fn a_stopped_run_is_not_evaluated_or_overwritten() {
+    let h = Harness::new().await;
+    let rule = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67(RUN_AT, 0)]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T06:40:00Z")).await;
+    assert!(
+        h.store
+            .stop_track_run(
+                rule.id,
+                date(2026, 11, 12),
+                utc(RUN_AT),
+                utc("2026-11-12T06:41:00Z")
+            )
+            .await
+            .unwrap()
+    );
+    scheduler.tick(utc("2026-11-12T06:55:10Z")).await;
+    assert_eq!(h.notifier.count(), 0);
+    // The conditional update refuses what a stop got in front of.
+    assert!(
+        !h.store
+            .update_track_run(
+                rule.id,
+                date(2026, 11, 12),
+                "tracking",
+                &TrackState::default(),
+                utc("2026-11-12T06:55:10Z")
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "stopped"
+    );
+}
+
+#[tokio::test]
+async fn yesterdays_tracking_goes_on_after_midnight() {
+    let h = Harness::new().await;
+    // 23:58 Rome (22:58 UTC), 12 minutes late: expected 00:10 on the 13th (23:10 UTC).
+    let rule = h
+        .track_rule(|rule| rule.config = RuleConfig::Track(track_config("67", (23, 58))))
+        .await;
+    h.set_departures(Some(vec![departure(
+        "67",
+        "Centro",
+        "2026-11-12T23:10:00Z",
+        720,
+        Source::Gtt,
+        false,
+    )]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T22:30:00Z")).await;
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "tracking"
+    );
+    // 00:05 Rome on the 13th: the run of the 12th is evaluated.
+    scheduler.tick(utc("2026-11-12T23:05:10Z")).await;
+    let titles = h.titles();
+    assert!(titles.contains(&"⏰ Il 67 delle 23:58 passa tra 5 minuti".to_owned()));
+    // The 13th's own occurrence is not due yet.
+    assert!(h.track_run(&rule, date(2026, 11, 13)).await.is_none());
+}
+
+fn one_off_departure(expected: &str) -> Departure {
+    departure("67", "Centro", expected, 0, Source::Gtt, false)
+}
+
+#[tokio::test]
+async fn a_one_off_starts_at_creation_and_follows_its_trip() {
+    let h = Harness::new().await;
+    let dep = one_off_departure("2026-11-12T07:30:00Z");
+    let now = utc("2026-11-12T07:10:00Z");
+    let (rule, created) = tracking::create_one_off(
+        &h.rules,
+        &h.store,
+        OneOff {
+            stop_id: "gtt:39",
+            departure: &dep,
+            alert_before_minutes: vec![10, 5],
+            delay_alert_minutes: 3,
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    assert!(created);
+    assert_eq!(rule.name, "67 delle 08:30");
+    assert_eq!(rule.date, Some(date(2026, 11, 12)));
+    assert!(rule.days.is_empty());
+    let RuleConfig::Track(config) = &rule.config else {
+        panic!("not a track rule")
+    };
+    assert_eq!(config.trip_id.as_deref(), Some("trip-67"));
+    assert_eq!(config.watch_from_minutes, 10);
+    assert_eq!(config.tolerance_minutes, 0);
+    let run = h.track_run(&rule, date(2026, 11, 12)).await.unwrap();
+    assert_eq!(run.status, "tracking");
+    assert_eq!(run.state.trip_id.as_deref(), Some("trip-67"));
+
+    h.set_departures(Some(vec![dep.clone()]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T07:20:10Z")).await;
+    scheduler.tick(utc("2026-11-12T07:25:10Z")).await;
+    assert_eq!(
+        h.titles(),
+        vec![
+            "⏰ Il 67 delle 08:30 passa tra 10 minuti",
+            "⏰ Il 67 delle 08:30 passa tra 5 minuti"
+        ]
+    );
+
+    // The same trip again replaces the config (not new) and keeps one rule.
+    let (again, created) = tracking::create_one_off(
+        &h.rules,
+        &h.store,
+        OneOff {
+            stop_id: "gtt:39",
+            departure: &dep,
+            alert_before_minutes: vec![2],
+            delay_alert_minutes: 5,
+        },
+        utc("2026-11-12T07:26:00Z"),
+    )
+    .await
+    .unwrap();
+    assert!(!created);
+    assert_eq!(again.id, rule.id);
+    assert_eq!(h.rules.list().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_one_off_rule_without_a_run_starts_when_seen() {
+    let h = Harness::new().await;
+    let rule = h
+        .track_rule(|rule| {
+            rule.days = vec![];
+            rule.date = Some(date(2026, 11, 12));
+            let mut config = track_config("67", (8, 5));
+            config.trip_id = Some("trip-67".to_owned());
+            config.watch_from_minutes = 10;
+            rule.config = RuleConfig::Track(config);
+        })
+        .await;
+    h.set_departures(Some(vec![run67(RUN_AT, 0)]));
+    h.scheduler().tick(utc("2026-11-12T06:30:00Z")).await;
+    let run = h.track_run(&rule, date(2026, 11, 12)).await.unwrap();
+    assert_eq!(run.status, "tracking");
+    assert_eq!(run.state.expected, Some(utc(RUN_AT)));
+}
+
+#[tokio::test]
+async fn a_one_off_for_after_midnight_is_followed_from_the_evening_before() {
+    let h = Harness::new().await;
+    // 00:30 Rome on the 13th is 23:30 UTC on the 12th; tapped at 23:20 Rome (22:20 UTC).
+    let dep = one_off_departure("2026-11-12T23:30:00Z");
+    let (rule, _) = tracking::create_one_off(
+        &h.rules,
+        &h.store,
+        OneOff {
+            stop_id: "gtt:39",
+            departure: &dep,
+            alert_before_minutes: vec![60],
+            delay_alert_minutes: 3,
+        },
+        utc("2026-11-12T22:20:00Z"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(rule.date, Some(date(2026, 11, 13)));
+    h.set_departures(Some(vec![dep]));
+    // 23:31 Rome on the 12th: 59 minutes left, the 60-minute reminder is current.
+    h.scheduler().tick(utc("2026-11-12T22:31:00Z")).await;
+    assert_eq!(h.titles(), vec!["⏰ Il 67 delle 00:30 passa tra 60 minuti"]);
+}
+
+#[tokio::test]
+async fn a_one_off_with_no_data_for_an_hour_fails_silently() {
+    let h = Harness::new().await;
+    let dep = one_off_departure("2026-11-12T07:30:00Z");
+    let (rule, _) = tracking::create_one_off(
+        &h.rules,
+        &h.store,
+        OneOff {
+            stop_id: "gtt:39",
+            departure: &dep,
+            alert_before_minutes: vec![5],
+            delay_alert_minutes: 3,
+        },
+        utc("2026-11-12T07:10:00Z"),
+    )
+    .await
+    .unwrap();
+    h.set_departures(None);
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T08:29:00Z")).await;
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "tracking"
+    );
+    scheduler.tick(utc("2026-11-12T08:31:00Z")).await;
+    assert_eq!(
+        h.track_run(&rule, date(2026, 11, 12)).await.unwrap().status,
+        "failed"
+    );
+    assert_eq!(h.notifier.count(), 0);
+}
+
+#[tokio::test]
+async fn old_one_off_rules_are_purged_with_their_runs() {
+    let h = Harness::new().await;
+    let old = h
+        .track_rule(|rule| {
+            rule.days = vec![];
+            rule.date = Some(date(2026, 11, 10));
+        })
+        .await;
+    let yesterday = h
+        .track_rule(|rule| {
+            rule.days = vec![];
+            rule.date = Some(date(2026, 11, 11));
+        })
+        .await;
+    let recurring = h.track_rule(|_| {}).await;
+    h.scheduler().tick(utc("2026-11-12T12:00:00Z")).await;
+    assert!(h.rules.get(old.id).await.unwrap().is_none());
+    assert!(h.rules.get(yesterday.id).await.unwrap().is_some());
+    assert!(h.rules.get(recurring.id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn alerts_are_per_rule_and_a_tracking_sends_them_when_it_starts() {
+    let h = Harness::with_alerts().await;
+    let summary = h.rule(|_| {}).await;
+    let track = h.track_rule(|_| {}).await;
+    h.set_departures(Some(vec![run67(RUN_AT, 0)]));
+    // 06:00Z: the baseline; the new alert appears at 06:20Z and names line 67.
+    *h.alerts.0.lock().unwrap() = alerts_read(vec![alert("old", &["67U"])], "2026-11-12T06:00:00Z");
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T06:00:30Z")).await;
+    *h.alerts.0.lock().unwrap() = alerts_read(
+        vec![alert("old", &["67U"]), alert("new", &["67U"])],
+        "2026-11-12T06:20:00Z",
+    );
+    scheduler.tick(utc("2026-11-12T06:20:30Z")).await;
+    assert_eq!(h.notifier.count(), 0);
+
+    // The tracking starts at 06:35Z and sends the alert; the summary at 06:40Z sends it too.
+    scheduler.tick(utc("2026-11-12T06:35:10Z")).await;
+    assert_eq!(h.titles(), vec!["🚧 Avviso new"]);
+    scheduler.tick(utc("2026-11-12T06:40:10Z")).await;
+    let titles = h.titles();
+    assert_eq!(titles.len(), 3);
+    assert!(titles[1].starts_with("🚌"));
+    assert_eq!(titles[2], "🚧 Avviso new");
+    // Neither sends it twice.
+    h.scheduler().tick(utc("2026-11-12T06:40:40Z")).await;
+    assert_eq!(h.notifier.count(), 3);
+    let unsent = h
+        .store
+        .unnotified_alert_ids(summary.id, utc("2026-11-01T00:00:00Z"))
+        .await
+        .unwrap();
+    assert!(unsent.is_empty());
+    let unsent = h
+        .store
+        .unnotified_alert_ids(track.id, utc("2026-11-01T00:00:00Z"))
+        .await
+        .unwrap();
+    assert!(unsent.is_empty());
+}
+
+#[tokio::test]
+async fn a_just_after_midnight_rule_starts_the_evening_before() {
+    let h = Harness::new().await;
+    // 00:10 Rome on the 13th (23:10 UTC on the 12th), watched from 23:40 Rome (22:40 UTC).
+    let rule = h
+        .track_rule(|rule| rule.config = RuleConfig::Track(track_config("67", (0, 10))))
+        .await;
+    h.set_departures(Some(vec![run67("2026-11-12T23:10:00Z", 0)]));
+    let scheduler = h.scheduler();
+    scheduler.tick(utc("2026-11-12T22:39:50Z")).await;
+    assert!(h.track_run(&rule, date(2026, 11, 13)).await.is_none());
+    scheduler.tick(utc("2026-11-12T22:40:10Z")).await;
+    let run = h.track_run(&rule, date(2026, 11, 13)).await.unwrap();
+    assert_eq!(run.status, "tracking");
+    assert_eq!(run.due_at, utc("2026-11-12T23:10:00Z"));
+}
+
+#[tokio::test]
+async fn a_one_off_of_another_day_is_not_reused() {
+    let h = Harness::new().await;
+    let yesterday = one_off_departure("2026-11-11T07:30:00Z");
+    let today = one_off_departure("2026-11-12T07:30:00Z");
+    let mut ids = Vec::new();
+    for (dep, now) in [
+        (&yesterday, "2026-11-11T07:10:00Z"),
+        (&today, "2026-11-12T07:10:00Z"),
+    ] {
+        let (rule, created) = tracking::create_one_off(
+            &h.rules,
+            &h.store,
+            OneOff {
+                stop_id: "gtt:39",
+                departure: dep,
+                alert_before_minutes: vec![5],
+                delay_alert_minutes: 3,
+            },
+            utc(now),
+        )
+        .await
+        .unwrap();
+        assert!(created);
+        ids.push(rule.id);
+    }
+    assert_ne!(ids[0], ids[1]);
 }

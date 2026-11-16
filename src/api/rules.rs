@@ -526,13 +526,14 @@ fn parse_config(kind: Kind, config: serde_json::Value) -> Result<RuleConfig, Api
                     1,
                     MAX_DELAY_ALERT_MINUTES,
                 )?,
+                trip_id: None,
             }))
         }
     }
 }
 
 /// Longest first, each once; none is allowed (only delay and cancellation alerts).
-fn clean_reminders(mut minutes: Vec<u32>) -> Result<Vec<u32>, ApiError> {
+pub(super) fn clean_reminders(mut minutes: Vec<u32>) -> Result<Vec<u32>, ApiError> {
     for minute in &minutes {
         check_range(
             "config.alert_before_minutes",

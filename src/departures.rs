@@ -53,7 +53,7 @@ pub struct Departure {
 }
 
 /// Where a departure's expected time comes from (decision N of Phase 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     /// GTT's own trip updates (urban runs).

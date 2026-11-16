@@ -16,14 +16,19 @@ use crate::{
     display_name::display_name,
     gtt::alerts::{Alert, Alerts, AlertsService},
     notify::{BoxFuture, MAX_PAYLOAD_BYTES, Notification, Notifier, NotifyError, SendReport},
-    rules::{Rule, RuleConfig, RuleStore, SummaryConfig, schedule::Day, schedule::local_date},
+    rules::{
+        Rule, RuleConfig, RuleStore, SummaryConfig, TrackConfig, schedule::Day,
+        schedule::local_date,
+    },
     stops::{LineRef, StopIndex},
     time::Clock,
 };
 
 pub mod store;
+pub mod tracking;
 
-use store::{NewNotification, SchedulerStore};
+use store::{NewNotification, ObservedDelay, SchedulerStore};
+use tracking::{StepInput, TrackState, TrackStatus};
 
 /// Descriptions of alerts are cut to about this many characters (decision 8).
 const ALERT_BODY_CHARS: usize = 400;
@@ -363,16 +368,28 @@ impl Scheduler {
                 return;
             }
         };
-        let schedule_dates = [today.pred_opt().unwrap_or(today), today];
+        let yesterday = today.pred_opt().unwrap_or(today);
+        let tomorrow = today.succ_opt().unwrap_or(today);
         for rule in &rules {
-            let RuleConfig::Summary(config) = &rule.config else {
-                continue;
-            };
             let schedule = rule.schedule();
-            for date in schedule_dates {
-                if let Day::Due { at } = schedule.on(date) {
-                    self.occurrence(rule, config, date, date == today, at.to_utc(), now)
-                        .await;
+            match &rule.config {
+                RuleConfig::Summary(config) => {
+                    for date in [yesterday, today] {
+                        if let Day::Due { at } = schedule.on(date) {
+                            self.occurrence(rule, config, date, date == today, at.to_utc(), now)
+                                .await;
+                        }
+                    }
+                }
+                RuleConfig::Track(config) => {
+                    // An occurrence just after midnight is followed from the evening before.
+                    let dates = [yesterday, today, tomorrow];
+                    for date in dates {
+                        if let Day::Due { at } = schedule.on(date) {
+                            self.track_occurrence(rule, config, date, at.to_utc(), now)
+                                .await;
+                        }
+                    }
                 }
             }
         }
@@ -394,6 +411,13 @@ impl Scheduler {
                 tracing::debug!("purged {notifications} notifications and {runs} rule runs");
             }
             Err(err) => tracing::warn!("cannot purge old scheduler rows: {err}"),
+        }
+        // One-off trackings of days before yesterday are over (decision 19).
+        let before = today.pred_opt().unwrap_or(today);
+        match self.store.purge_one_off_rules(before).await {
+            Ok(0) => {}
+            Ok(count) => tracing::debug!("purged {count} one-off tracking rule(s)"),
+            Err(err) => tracing::warn!("cannot purge old one-off rules: {err}"),
         }
     }
 
@@ -548,7 +572,7 @@ impl Scheduler {
                 );
                 self.record(self.store.set_run_status(rule.id, date, SENT, now))
                     .await;
-                self.notify_alerts(rule, config, now).await;
+                self.notify_alerts(rule, &config.lines, now).await;
             }
             Err(err) => {
                 tracing::error!("rule {}: cannot send the summary: {err}", rule.id);
@@ -558,16 +582,217 @@ impl Scheduler {
         }
     }
 
+    /// One occurrence of a track rule on `date` (decisions 5 to 13 of step 6).
+    async fn track_occurrence(
+        &self,
+        rule: &Rule,
+        config: &TrackConfig,
+        date: NaiveDate,
+        at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) {
+        let recurring = rule.date.is_none();
+        let run = match self.store.get_track_run(rule.id, date).await {
+            Ok(run) => run,
+            Err(err) => {
+                tracing::error!("cannot read the run of rule {}: {err}", rule.id);
+                return;
+            }
+        };
+        let state = match run {
+            Some(run) if run.status == tracking::TRACKING || run.status == tracking::SEARCHING => {
+                run.state
+            }
+            Some(_) => return,
+            None => match self.start_run(rule, config, date, at, now, recurring).await {
+                Some(state) => state,
+                None => return,
+            },
+        };
+
+        let fetched = match self.departures.departures(&rule.stop_id).await {
+            Ok(fetched) => fetched,
+            Err(err) => {
+                tracing::warn!("rule {}: departures unavailable: {err}", rule.id);
+                let last = state.expected.unwrap_or(at);
+                if now >= last + tracking::GIVE_UP_AFTER {
+                    self.record(self.store.update_track_run(
+                        rule.id,
+                        date,
+                        tracking::FAILED,
+                        &state,
+                        now,
+                    ))
+                    .await;
+                }
+                return;
+            }
+        };
+        let stop = stop_label(&self.stops, &rule.stop_id, Some(&fetched)).await;
+        let stop_text = format!("{} ({})", stop.name, stop.code);
+        let input = StepInput {
+            config,
+            at,
+            recurring,
+            stop: &stop_text,
+        };
+        {
+            let step = tracking::step(state, &input, &fetched.data.departures, now);
+            // The state, events included, is stored before sending: a missing notification
+            // beats a duplicate. A run stopped or deleted meanwhile is not overwritten.
+            let saved = self
+                .store
+                .update_track_run(rule.id, date, step.status.as_str(), &step.state, now)
+                .await;
+            match saved {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(err) => {
+                    tracing::error!("cannot save the run of rule {}: {err}", rule.id);
+                    return;
+                }
+            }
+            for notice in &step.notices {
+                let result = send_and_log(
+                    self.notifier.as_ref(),
+                    &self.store,
+                    Some(rule.id),
+                    notice.event.kind.as_str(),
+                    notice.notification(rule.id),
+                    now,
+                )
+                .await;
+                if let Err(err) = result {
+                    tracing::error!("rule {}: cannot send a tracking notice: {err}", rule.id);
+                }
+            }
+            if step.status == TrackStatus::Done {
+                self.record_observed_delay(rule, config, date, &step.state)
+                    .await;
+            }
+        }
+    }
+
+    /// Inserts the run of an occurrence that has none, or says why not: `None`.
+    async fn start_run(
+        &self,
+        rule: &Rule,
+        config: &TrackConfig,
+        date: NaiveDate,
+        at: DateTime<Utc>,
+        now: DateTime<Utc>,
+        recurring: bool,
+    ) -> Option<TrackState> {
+        let watch_from = TimeDelta::minutes(i64::from(config.watch_from_minutes));
+        if recurring && now < at - watch_from {
+            return None;
+        }
+        // A run that is over, or that the rule did not exist for, is never started late;
+        // yesterday's occurrences before the rule existed are not even recorded.
+        let late = if recurring {
+            now - at > tracking::START_GRACE || at < rule.created_at
+        } else {
+            now - at > tracking::GIVE_UP_AFTER
+        };
+        if late {
+            if at < rule.created_at && date != local_date(now) {
+                return None;
+            }
+            tracing::info!(
+                "rule {} ({}): occurrence of {date} skipped",
+                rule.id,
+                rule.name
+            );
+            self.record(self.store.insert_track_run(
+                rule.id,
+                date,
+                tracking::SKIPPED,
+                at,
+                &TrackState::default(),
+                now,
+            ))
+            .await;
+            return None;
+        }
+        let (status, state) = if recurring {
+            (tracking::SEARCHING, TrackState::default())
+        } else {
+            // A one-off whose run was not inserted at creation follows its trip from now.
+            let state = TrackState {
+                trip_id: config.trip_id.clone(),
+                ..TrackState::default()
+            };
+            (tracking::TRACKING, state)
+        };
+        match self
+            .store
+            .insert_track_run(rule.id, date, status, at, &state, now)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(err) => {
+                tracing::error!("cannot start the run of rule {}: {err}", rule.id);
+                return None;
+            }
+        }
+        if recurring {
+            self.notify_alerts(rule, std::slice::from_ref(&config.line), now)
+                .await;
+        }
+        Some(state)
+    }
+
+    async fn record_observed_delay(
+        &self,
+        rule: &Rule,
+        config: &TrackConfig,
+        date: NaiveDate,
+        state: &TrackState,
+    ) {
+        let (Some(trip_id), Some(scheduled), Some(expected), Some(delay), Some(source)) = (
+            &state.trip_id,
+            state.scheduled,
+            state.expected,
+            state.delay_seconds,
+            state.source,
+        ) else {
+            return;
+        };
+        let source = match source {
+            Source::Gtt => "gtt",
+            Source::Otp => "otp",
+            Source::Scheduled => "scheduled",
+        };
+        let observed = ObservedDelay {
+            service_date: state.service_date.unwrap_or(date),
+            trip_id: trip_id.clone(),
+            stop_id: rule.stop_id.clone(),
+            line: config.line.clone(),
+            scheduled,
+            final_expected: expected,
+            delay_seconds: delay,
+            source: source.to_owned(),
+        };
+        self.record(self.store.upsert_observed_delay(&observed))
+            .await;
+    }
+
     async fn record<T>(&self, result: impl Future<Output = Result<T, store::SchedulerStoreError>>) {
         if let Err(err) = result.await {
             tracing::error!("scheduler store error: {err}");
         }
     }
 
-    /// The new alerts of the rule's stop and lines, right after its summary (decisions 7, 8).
-    async fn notify_alerts(&self, rule: &Rule, config: &SummaryConfig, now: DateTime<Utc>) {
+    /// The new alerts of the rule's stop and `lines` (empty: all), right after its summary or
+    /// when its tracking starts (decisions 7, 8, 15).
+    async fn notify_alerts(&self, rule: &Rule, lines: &[String], now: DateTime<Utc>) {
         let Some(source) = &self.alerts else { return };
-        let new_ids = match self.store.unnotified_alert_ids(rule.created_at).await {
+        let new_ids = match self
+            .store
+            .unnotified_alert_ids(rule.id, rule.created_at)
+            .await
+        {
             Ok(ids) => ids,
             Err(err) => {
                 tracing::warn!("cannot read the new alerts: {err}");
@@ -584,9 +809,9 @@ impl Scheduler {
             .into_iter()
             .filter(|alert| new_ids.contains(&alert.id))
             .filter(|alert| {
-                config.lines.is_empty()
+                lines.is_empty()
                     || alert.lines.is_empty()
-                    || config.lines.iter().any(|line| alert.names_line(line))
+                    || lines.iter().any(|line| alert.names_line(line))
             })
             .collect();
         // An alert is marked right after its own send, so a failure midway never resends the
@@ -612,7 +837,7 @@ impl Scheduler {
             } else {
                 vec![alerts[index].id.clone()]
             };
-            if let Err(err) = self.store.mark_alerts_notified(&ids, now).await {
+            if let Err(err) = self.store.mark_alerts_notified(rule.id, &ids, now).await {
                 tracing::error!("cannot mark the alerts as notified: {err}");
                 return;
             }
