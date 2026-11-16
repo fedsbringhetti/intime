@@ -22,6 +22,8 @@
     compact?: boolean
     /** The line has GTT alerts at this stop: a small warning after the time. */
     alert?: boolean
+    /** Makes the row a button (follow this run); never on a canceled row. */
+    onselect?: () => void
   }
 
   let {
@@ -36,6 +38,7 @@
     canceled = false,
     compact = false,
     alert = false,
+    onselect,
   }: Props = $props()
 
   let delayInfo = $derived(
@@ -49,7 +52,10 @@
   {/if}
 {/snippet}
 
-<li class="row" class:canceled class:compact>
+<li class="row" class:canceled class:compact class:tappable={onselect && !canceled}>
+  {#if onselect && !canceled}
+    <button type="button" class="cover" onclick={onselect} aria-label="Segui la corsa {line} {headsign}"></button>
+  {/if}
   <LineBadge name={line} {mode} />
   <span class="middle">
     <span class="headsign">{headsign}</span>
@@ -89,6 +95,7 @@
 
 <style>
   .row {
+    position: relative;
     display: grid;
     grid-template-columns: 48px minmax(0, 1fr) auto;
     align-items: center;
@@ -102,6 +109,19 @@
 
   .row > :global(.badge) {
     justify-self: start;
+  }
+
+  .cover {
+    position: absolute;
+    inset: 0 calc(-1 * var(--gutter));
+    border: 0;
+    background: transparent;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .cover:active {
+    background: var(--fill);
+    opacity: 0.6;
   }
 
   .middle {

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { errorText, sendTestNotification } from '../lib/api'
+  import { errorText, getTrackings, sendTestNotification, type TrackingSummary } from '../lib/api'
   import ErrorCard from '../lib/components/ErrorCard.svelte'
   import Icon from '../lib/components/Icon.svelte'
   import ScreenHeader from '../lib/components/ScreenHeader.svelte'
+  import LineBadge from '../lib/components/LineBadge.svelte'
   import SkeletonRows from '../lib/components/SkeletonRows.svelte'
+  import { displayName, formatTime } from '../lib/format'
   import { enablePush, loadPush, type PushState, type PushStatus } from '../lib/push'
 
   /** `null` while the state is being read. */
@@ -31,6 +33,17 @@
       failure = errorText(error)
     }
   }
+
+  /** Followed runs; failing to read them never hides the rest of the screen. */
+  let trackings = $state<TrackingSummary[]>([])
+  async function loadTrackings() {
+    try {
+      trackings = await getTrackings()
+    } catch {
+      trackings = []
+    }
+  }
+  onMount(loadTrackings)
 
   // Not a button of its own: a screen that opens must never ask for permission, only a tap.
   onMount(load)
@@ -138,7 +151,81 @@
   {/if}
 {/if}
 
+{#if trackings.length > 0}
+  <section class="followed" aria-labelledby="followed-h">
+    <h2 id="followed-h" class="section">Corse seguite</h2>
+    <ul class="card">
+      {#each trackings as tracking (tracking.id)}
+        <li>
+          <a class="tracked" href="/corsa/{tracking.id}">
+            <LineBadge name={tracking.line} mode={null} />
+            <span class="mid">
+              <span class="head">{tracking.headsign ? displayName(tracking.headsign) : displayName(tracking.stop.name)}</span>
+              <span class="sub">
+                {displayName(tracking.stop.name)}{tracking.recurring ? ' · ogni giorno' : ''}
+              </span>
+            </span>
+            <span class="when">
+              {tracking.expected ? formatTime(tracking.expected) : 'in ricerca'}
+            </span>
+            <Icon name="forward" size={16} stroke={2.6} />
+          </a>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
+
 <style>
+  .section {
+    margin: 0 0 8px;
+    font-size: var(--size-section);
+    font-weight: 700;
+  }
+
+  .followed ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .tracked {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) auto 16px;
+    align-items: center;
+    gap: 10px;
+    min-height: 64px;
+    padding: 0 var(--gutter);
+    color: var(--text);
+  }
+
+  li + li {
+    border-top: 1px solid var(--separator);
+  }
+
+  .mid {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .head,
+  .sub {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sub {
+    font-size: 14px;
+    color: var(--text-2);
+  }
+
+  .when {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
   .device {
     display: flex;
     align-items: center;

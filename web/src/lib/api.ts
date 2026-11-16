@@ -313,6 +313,84 @@ export function sendTestNotification(): Promise<TestNotificationResult> {
   return request('/api/notifications/test', { method: 'POST' })
 }
 
+export type TrackingSource = 'gtt' | 'otp' | 'scheduled'
+
+/** A row of `GET /api/trackings`. `id` is the id of the underlying rule. */
+export interface TrackingSummary {
+  id: number
+  line: string
+  headsign: string | null
+  stop: { id: string; code: string; name: string }
+  scheduled: string | null
+  expected: string | null
+  delay_seconds: number | null
+  source: TrackingSource | null
+  phase: 'searching' | 'tracking'
+  recurring: boolean
+}
+
+export type TrackingPhase =
+  | 'waiting'
+  | 'searching'
+  | 'tracking'
+  | 'done'
+  | 'cancelled'
+  | 'not_found'
+  | 'stopped'
+  | 'failed'
+
+export interface TrackingEvent {
+  kind: 'reminder' | 'delay' | 'cancelled' | 'not_found'
+  minutes: number | null
+  text: string
+  sent_at: string
+}
+
+/** `GET /api/trackings/{id}`. */
+export interface TrackingDetail {
+  id: number
+  recurring: boolean
+  phase: TrackingPhase
+  line: string
+  headsign: string | null
+  stop: { id: string; code: string; name: string }
+  scheduled: string | null
+  expected: string | null
+  delay_seconds: number | null
+  source: TrackingSource | null
+  checked_at: string | null
+  vehicle: { label: string; stops_away: number | null; updated_at: string } | null
+  events: TrackingEvent[]
+  /** Reminder thresholds not yet sent, descending. */
+  planned_reminders: number[]
+  delay_alert_minutes: number
+}
+
+/** Body of `POST /api/trackings`. */
+export interface TrackRequest {
+  stop: string
+  trip_id: string
+  alert_before_minutes?: number[]
+  delay_alert_minutes?: number
+}
+
+export async function getTrackings(signal?: AbortSignal): Promise<TrackingSummary[]> {
+  return (await get<{ trackings: TrackingSummary[] }>('/api/trackings', signal)).trackings
+}
+
+export function getTracking(id: number | string, signal?: AbortSignal): Promise<TrackingDetail> {
+  return get(`/api/trackings/${encodeURIComponent(String(id))}`, signal)
+}
+
+/** Follows a run; 201 when new, 200 when it replaced an earlier one for the same run. */
+export function createTracking(body: TrackRequest): Promise<TrackingDetail> {
+  return request('/api/trackings', { method: 'POST', body })
+}
+
+export function deleteTracking(id: number | string): Promise<void> {
+  return request(`/api/trackings/${encodeURIComponent(String(id))}`, { method: 'DELETE' })
+}
+
 /**
  * How a stop is written in the app's paths: the bare code for GTT (`/fermata/39`), the
  * full id for other companies, whose codes would clash with GTT's.
@@ -354,6 +432,8 @@ export function errorText(error: unknown): string {
       return 'Il servizio degli orari è lento a rispondere. Riprova.'
     case 'upstream_error':
       return 'Il servizio degli orari non risponde. Riprova tra poco.'
+    case 'trip_not_found':
+      return 'Questa corsa non si trova più.'
     case 'push_disabled':
       return 'Le notifiche non sono attive sul server.'
     default:

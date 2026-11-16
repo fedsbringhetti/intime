@@ -33,6 +33,12 @@ const VERY_LATE_MINUTES = 5
  * The label and color of a delay in seconds: "in orario", "+2", "−1". Rounded to the
  * nearest minute, so 20 seconds late is still on time.
  */
+export function describeDelayLong(seconds: number): { label: string; level: DelayLevel } {
+  const d = describeDelay(seconds)
+  if (d.level === 'on-time') return d
+  return { ...d, label: `${d.label} min ${d.level === 'early' ? 'in anticipo' : 'in ritardo'}` }
+}
+
 export function describeDelay(seconds: number): { label: string; level: DelayLevel } {
   const minutes = Math.round(seconds / 60)
   if (minutes === 0) return { label: 'in orario', level: 'on-time' }

@@ -16,6 +16,10 @@ import {
   stopParamFromId,
   isUnreachable,
   updateFavorite,
+  createTracking,
+  deleteTracking,
+  getTracking,
+  getTrackings,
 } from './api'
 
 function respond(status: number, body: unknown) {
@@ -102,6 +106,34 @@ describe('push', () => {
     const test = respond(200, { channel: 'log', sent: 1, removed: 0, failed: 0 })
     expect((await sendTestNotification()).channel).toBe('log')
     expect(test.mock.calls[0][1]).toMatchObject({ method: 'POST', body: undefined })
+  })
+})
+
+describe('trackings', () => {
+  it('lists, reads, creates and deletes', async () => {
+    const list = respond(200, { trackings: [{ id: 3, line: '4' }] })
+    expect((await getTrackings())[0].id).toBe(3)
+    expect(list.mock.calls[0][0]).toBe('/api/trackings')
+
+    const one = respond(200, { id: 3, phase: 'tracking' })
+    expect((await getTracking(3)).phase).toBe('tracking')
+    expect(one.mock.calls[0][0]).toBe('/api/trackings/3')
+
+    const create = respond(201, { id: 4, phase: 'waiting' })
+    const body = { stop: 'gtt:39', trip_id: 'gtt:abc', alert_before_minutes: [10, 5], delay_alert_minutes: 3 }
+    expect((await createTracking(body)).id).toBe(4)
+    expect(create.mock.calls[0][0]).toBe('/api/trackings')
+    expect(create.mock.calls[0][1]).toMatchObject({ method: 'POST', body: JSON.stringify(body) })
+
+    const del = respond(204, null)
+    await deleteTracking(4)
+    expect(del.mock.calls[0][0]).toBe('/api/trackings/4')
+    expect(del.mock.calls[0][1]).toMatchObject({ method: 'DELETE' })
+  })
+
+  it('reports a 404 as an ApiError', async () => {
+    respond(404, { error: { code: 'not_found', message: 'gone' } })
+    await expect(getTracking(9)).rejects.toMatchObject({ status: 404 })
   })
 })
 

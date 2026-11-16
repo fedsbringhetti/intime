@@ -9,6 +9,7 @@
     getStop,
     isUnreachable,
     removeFavorite,
+    type Departure,
     type DeparturesResponse,
     type Favorite,
     type StopInfo,
@@ -23,6 +24,7 @@
   import OfflineBanner from '../lib/components/OfflineBanner.svelte'
   import ScreenHeader from '../lib/components/ScreenHeader.svelte'
   import SkeletonRows from '../lib/components/SkeletonRows.svelte'
+  import TrackSheet from '../lib/components/TrackSheet.svelte'
   import { filterDepartures, isChosen, lineChoices, toggleLine } from '../lib/departures'
   import { matchingFavorite, stopIdOf } from '../lib/favorites'
   import { displayName, formatTime } from '../lib/format'
@@ -51,6 +53,8 @@
   /** The server cannot be reached and old data is shown: when it was received. */
   let staleSince = $state<string | null>(null)
   let notFound = $state(false)
+  /** The departure whose follow sheet is open. */
+  let tracked = $state<Departure | null>(null)
   let reload: () => void = () => {}
 
   // The prop is recomputed whenever the address changes, also when only `?linee=` did; a
@@ -276,6 +280,7 @@
             canceled={departure.canceled}
             stale={staleSince !== null}
             alert={alertLines.has(departure.line.toLowerCase())}
+            onselect={staleSince ? undefined : () => (tracked = departure)}
           />
         {/each}
       </ol>
@@ -291,6 +296,10 @@
       <SkeletonRows count={4} />
     </div>
   {/if}
+{/if}
+
+{#if tracked && data}
+  <TrackSheet departure={tracked} stop={data.stop.id} onclose={() => (tracked = null)} />
 {/if}
 
 <style>

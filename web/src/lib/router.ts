@@ -11,6 +11,8 @@ export type Route =
   | { name: 'near' }
   | { name: 'favorites' }
   | { name: 'notifications' }
+  /** The live page of a followed run, `/corsa/12`. */
+  | { name: 'tracking'; id: string }
   | { name: 'info' }
   | { name: 'design' }
   | { name: 'not-found' }
@@ -52,6 +54,8 @@ export function matchRoute(pathname: string, search: string, options: RouteOptio
       return { name: 'not-found' }
     }
   }
+  const tracking = /^\/corsa\/(\d+)$/.exec(path)
+  if (tracking) return { name: 'tracking', id: tracking[1] }
   return { name: 'not-found' }
 }
 
@@ -83,6 +87,8 @@ export function pathOf(route: Route): string {
       return '/preferiti'
     case 'notifications':
       return '/notifiche'
+    case 'tracking':
+      return `/corsa/${encodeURIComponent(route.id)}`
     case 'info':
       return '/info'
     case 'design':

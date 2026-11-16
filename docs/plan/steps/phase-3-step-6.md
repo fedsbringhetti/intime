@@ -82,3 +82,20 @@ Scope (phase-3.md sections 4–6, 10, 11, 14): tracking one run, on the fly from
 3. `observed_delays` is written from this step; step 9 keeps `/api/delays` and the UI (AY).
 4. Alerts already notified become per rule (AZ, backlog item).
 5. "Smetti di seguire" on a recurring rule stops today's run only (BA).
+
+## Requested during the manual check (2026-11-16)
+
+- Alert for a run that is **early**, not only late: not done in this step, recorded in [backlog.md](../../backlog.md).
+- Delay label in the expanded views (sheet and live page) reads "−3 min in anticipo" / "+9 min in ritardo"; the stop list keeps "−3" / "+9". Done.
+
+## Report (2026-11-16)
+
+**Built.** Tracking of one run: `TrackConfig.trip_id`, `TripUpdates::vehicle` (vehicle and stops away from trip updates only), the pure `step` and the tick integration in `src/scheduler/tracking.rs`, migration `0007` (`observed_delays`, `rule_notified_alerts`), alerts per rule, `/api/trackings` (create, list, detail, delete), one-offs hidden in `/api/rules`, the "Avvisami" sheet, the live page `/corsa/{id}` and "Corse seguite" in Notifiche. Checked by hand in Chrome on a copy of the data folder: reminders at 10 and 5 minutes, vehicle and stops away on the live page.
+
+**Where the plan was wrong.**
+- `step` also needs the occurrence time and the stop label, so it takes a `StepInput` and returns a `Step`, not a bare tuple.
+- The tick must also look at tomorrow for every track rule (a rule at 00:10 starts the evening before), not only for one-offs; found in the review, with the detail and delete of a recurring rule following the active run across midnight.
+- `create_one_off` must match the rule by stop, trip and date (trip ids repeat every day).
+- Recurring runs with no row are skipped when more than 10 minutes late or when the rule was created after `at` (not in the plan).
+
+**For the next work.** Backlog items from the review: loop lines (one-off follows the first passage), paused rule leaving its run `tracking`, two narrow creation races, `rule_notified_alerts` growth, alert for an early run. Step 7 adds the rule editor and `/test` for tracking rules, and the "Crea una regola" link in the sheet. Reminders and a delay alert in the same tick share one `tag`, so the second replaces the first on the device (plan decision 14); worth a look on iPhone.
