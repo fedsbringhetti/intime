@@ -202,7 +202,7 @@ Every favorite, in order, with its next departures: what the web app's home scre
 
 ## Rules
 
-Rules send notifications on their own: a **summary** of the next departures at a fixed time, or the tracking of one **run** every matching day ([plan](../plan/phase-3.md#5-rule-model)). Summaries are sent by the scheduler (Phase 3, step 5, see [architecture](../architecture.md#scheduler)); tracking comes with step 6, and until then a tracking rule is stored and has its calendar but sends nothing.
+Rules send notifications on their own: a **summary** of the next departures at a fixed time, or the tracking of one **run** every matching day ([plan](../plan/phase-3.md#5-rule-model)). Summaries are sent by the scheduler (Phase 3, step 5, see [architecture](../architecture.md#scheduler)); tracking rules are followed by the same scheduler (step 6, see [Tracking a run](#tracking-a-run)): a recurring one looks for its run every matching day.
 
 ```bash
 curl -s -H "$AUTH" -H "Content-Type: application/json" -X POST "$BASE/api/rules" -d '{"name": "Casa → lavoro", "kind": "summary", "stop": "39", "days": ["mon", "tue", "wed", "thu", "fri"], "config": {"time": "07:40", "lines": ["9B", "67"]}}'
@@ -269,7 +269,7 @@ curl -s -H "$AUTH" "$BASE/api/rules"
 curl -s -H "$AUTH" "$BASE/api/rules/1"
 ```
 
-All rules, oldest first (`{"rules": [...]}`), or one rule, each as above.
+All rules, oldest first (`{"rules": [...]}`), or one rule, each as above. One-off trackings (started from a departure, below) are not rules here: they are missing from the list and every `/api/rules/{id}` route answers `404 rule_not_found` for them.
 
 ```bash
 curl -s -H "$AUTH" -H "Content-Type: application/json" -X PATCH "$BASE/api/rules/1" -d '{"days": ["mon", "wed"], "config": {"time": "07:50"}}'
@@ -312,6 +312,61 @@ curl -s -H "$AUTH" "$BASE/api/rules/1/runs"
 ```
 
 `{"runs": [...]}`: the last 30 runs of the rule, newest day first, each `{"rule_id", "date", "status", "due_at", "state", "updated_at"}` (`date` is the calendar day in Rome, `state` is `null` for summaries). `404` for an unknown rule.
+
+## Tracking a run
+
+Following one departure: reminders before it passes, an alert if it is late, one if it is cancelled. A **one-off** tracking is started from a departure; a **recurring** one is a `track` rule (above) that finds its run every matching day. Both are shown by these routes, by rule id.
+
+```bash
+curl -s -H "$AUTH" -H "Content-Type: application/json" -X POST "$BASE/api/trackings" -d '{"stop": "39", "trip_id": "gtt:28459721U", "alert_before_minutes": [10, 5], "delay_alert_minutes": 3}'
+```
+
+Starts following a run (201). `trip_id` is the `trip_id` of a departure of the stop, as `/api/stops/{stop}/departures` returns it. The other two fields are optional, with the same defaults and limits as a tracking rule (reminders: at most 4, each 1–60 minutes, none allowed; delay alert: 1–30 minutes). It creates a hidden one-off rule named `<line> delle HH:MM`. Following the same run at the same stop again replaces its reminders and threshold and answers `200`. Errors: `404` `trip_not_found` (the run is not in the stop's list), `422` `trip_not_trackable` (cancelled or already departed), `404` `stop_not_found`, `400` `invalid_request`.
+
+The answer is the detail below.
+
+```bash
+curl -s -H "$AUTH" "$BASE/api/trackings"
+```
+
+`{"trackings": [...]}`: the trackings searching or following a run now (yesterday's, today's and tomorrow's runs), soonest first. Each has `id`, `line`, `headsign`, `stop` (`{id, code, name}`), `scheduled`, `expected`, `delay_seconds`, `source`, `phase` and `recurring`; the times are `null` while a recurring run is still being searched for.
+
+```bash
+curl -s -H "$AUTH" "$BASE/api/trackings/12"
+```
+
+The live state of a tracking, by rule id:
+
+```json
+{
+  "id": 12, "recurring": false, "phase": "tracking",
+  "line": "67", "headsign": "Falchera", "stop": {"id": "gtt:39", "code": "39", "name": "Porta Nuova"},
+  "scheduled": "2026-11-16T08:05:00+01:00", "expected": "2026-11-16T08:07:00+01:00",
+  "delay_seconds": 120, "source": "gtt", "checked_at": "2026-11-16T07:58:12+01:00",
+  "vehicle": {"label": "9648", "stops_away": 6, "updated_at": "2026-11-16T07:58:05+01:00"},
+  "events": [{"kind": "reminder", "minutes": 10, "text": "⏰ Il 67 delle 08:05 passa tra 10 minuti", "sent_at": "2026-11-16T07:57:01+01:00"}],
+  "planned_reminders": [5], "delay_alert_minutes": 3
+}
+```
+
+- `phase`: `waiting` (a recurring run, before it starts being watched), `searching`, `tracking`, `done`, `cancelled`, `not_found`, `stopped`, `skipped`, `failed`. The times and `headsign` are `null` until the run is found.
+- `vehicle` is `null` unless the run is `tracking` and GTT's trip update names a vehicle (urban runs). `stops_away` counts the stops between the vehicle's next stop and the tracked stop, and is `null` when the update is older than 3 minutes or the stop is already behind it; before a run starts it counts from its first stop, so it does not mean "near".
+- `events` are the notifications already sent (`reminder`, `delay`, `cancelled`, `not_found`); `planned_reminders` the thresholds not yet handled, longest first.
+- `404` `tracking_not_found` when the id is not a tracking rule.
+
+```bash
+curl -s -H "$AUTH" -X DELETE "$BASE/api/trackings/12"
+```
+
+Stops following (204). A one-off is deleted; for a recurring rule only its active run (or today's, if none is active) becomes `stopped` and the rule runs again on its next day.
+
+The notifications go out through the scheduler (see [architecture](../architecture.md#tracking)), at its 15-second tick, with `tag` `track-<id>` and `url` `/corsa/<id>`. A reminder already well past when following starts (more than 2 minutes after its threshold) is skipped, never sent late.
+
+### In the web app
+
+- **Stop screen**: a departure that is not cancelled is a button. It opens the sheet "Avvisami" with the run (line, destination, times, delay, source), the reminders (15, 10, 5 or 2 minutes before; 10 and 5 on) and the delay threshold (1–15 minutes, 3 by default). "Avvisami per questa corsa" starts the tracking and opens its page. Not offered while the departures shown are old (offline). There is no "Tutti i giorni?" link yet: recurring trackings have no editor until step 7.
+- **Live page** `/corsa/{id}`: "Parte tra N min", expected and scheduled time, delay, "Previsione GTT · aggiornata alle HH:MM", the assigned vehicle and its stops away when known, the notifications sent and those planned ("in programma", the delay alert "solo se succede"), and "Smetti di seguire". It reloads every 15 seconds while visible; a tracking that no longer exists shows "Corsa non più seguita". A notification opens this page.
+- **Notifiche**: "Corse seguite" lists the trackings in progress (line, destination, stop, expected time, "ogni giorno" for recurring ones), each opening its page; the section is absent when there are none.
 
 ## Push notifications
 
@@ -418,8 +473,11 @@ Always `{"error": {"code": "...", "message": "..."}}`:
 |------|--------|------|
 | 400 | `invalid_request` | bad parameter or body (the message says which) |
 | 401 | `unauthorized` | token missing or wrong |
-| 404 | `stop_not_found`, `favorite_not_found`, `rule_not_found` | unknown stop, favorite or rule |
+| 404 | `stop_not_found`, `favorite_not_found`, `rule_not_found` | unknown stop, favorite or rule (one-off trackings are not rules) |
+| 404 | `tracking_not_found` | `/api/trackings/{id}` for an id that is not a tracking |
+| 404 | `trip_not_found` | `POST /api/trackings`: the run is not in the stop's departures |
 | 422 | `not_a_summary` | `POST /api/rules/{id}/test` on a tracking rule |
+| 422 | `trip_not_trackable` | `POST /api/trackings`: the run is cancelled or already departed |
 | 500 | `internal_error` | database problem (details in the logs) |
 | 502 | `upstream_error` | upstream error and no recent data to fall back on |
 | 503 | `index_not_ready` | stop index not downloaded yet |
